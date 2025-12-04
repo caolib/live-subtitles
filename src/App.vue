@@ -150,16 +150,12 @@ const historySubtitles = computed(() => {
 </script>
 
 <template>
-  <div class="app-container" @mousedown="startDrag">
+  <div class="app-container">
     <!-- 顶部控制栏（自动隐藏） -->
     <div class="top-bar" @mousedown="startDrag">
       <div class="top-bar-left" @mousedown.stop>
-        <button 
-          class="action-btn" 
-          :class="{ active: isRunning }"
-          @click="toggleRecognition"
-          :title="isRunning ? '停止识别' : '开始识别'"
-        >
+        <button class="action-btn" :class="{ active: isRunning }" @click="toggleRecognition"
+          :title="isRunning ? '停止识别' : '开始识别'">
           {{ isRunning ? '⏹' : '▶' }}
         </button>
         <button class="action-btn" @click="copyAllText" title="复制全部">
@@ -183,14 +179,14 @@ const historySubtitles = computed(() => {
     <div class="subtitle-area">
       <!-- 历史字幕（合并显示，可滚动） -->
       <div class="history-text" v-if="historySubtitles.length > 0">
-        {{ historySubtitles.map(s => s.text).join(' ') }}
+        {{historySubtitles.map(s => s.text).join(' ')}}
       </div>
-      
+
       <!-- 当前字幕（固定在底部） -->
       <div class="current-subtitle" v-if="latestSubtitle">
         {{ latestSubtitle }}
       </div>
-      
+
       <!-- 空状态 -->
       <div class="empty-state" v-else-if="!isRunning">
         <span>点击开始按钮开始识别</span>
@@ -214,7 +210,9 @@ const historySubtitles = computed(() => {
   box-sizing: border-box;
 }
 
-html, body, #app {
+html,
+body,
+#app {
   height: 100%;
   overflow: hidden;
   background: transparent;
@@ -224,10 +222,6 @@ body {
   background: transparent;
   font-family: 'JetBrains Mono', 'Cascadia Code', '汉仪有圆', '喵字果汁体', 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
 }
-
-#app {
-  padding: 4px;
-}
 </style>
 
 <style scoped>
@@ -236,10 +230,8 @@ body {
   flex-direction: column;
   height: 100%;
   background: rgba(30, 30, 30, 0.9);
-  border-radius: 16px;
   overflow: hidden;
   backdrop-filter: blur(10px);
-  cursor: move;
 }
 
 /* 顶部控制栏（自动隐藏） */
@@ -379,6 +371,7 @@ body {
     opacity: 0;
     transform: translateY(5px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -400,6 +393,4 @@ body {
   background: rgba(255, 0, 0, 0.1);
   border-radius: 4px;
 }
-
-
 </style>
