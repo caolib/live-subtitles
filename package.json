@@ -1,0 +1,22 @@
+{
+  "name": "live-subtitles",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "rsbuild dev",
+    "build": "rsbuild build",
+    "preview": "rsbuild preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "vue": "^3.5.13",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2"
+  },
+  "devDependencies": {
+    "@rsbuild/core": "^1.1.10",
+    "@rsbuild/plugin-vue": "^1.0.5",
+    "@tauri-apps/cli": "^2"
+  }
+}
