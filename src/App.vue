@@ -1,160 +1,371 @@
 <script setup>
-import { ref } from "vue";
+import { ref, onMounted, onUnmounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
-const greetMsg = ref("");
-const name = ref("");
+// 状态
+const isRunning = ref(false);
+const subtitles = ref([]); // 已完成的字幕历史
+const currentText = ref(""); // 正在识别的文本（中间结果）
+const maxSubtitles = 5; // 最多显示的字幕条数
+const errorMessage = ref("");
 
-async function greet() {
-  // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-  greetMsg.value = await invoke("greet", { name: name.value });
+// 拖动相关
+const appWindow = getCurrentWindow();
+
+// 开始/停止识别
+async function toggleRecognition() {
+  try {
+    if (isRunning.value) {
+      await invoke("stop_recognition");
+      isRunning.value = false;
+    } else {
+      await invoke("start_recognition");
+      isRunning.value = true;
+      errorMessage.value = "";
+    }
+  } catch (e) {
+    errorMessage.value = String(e);
+    console.error("Recognition error:", e);
+  }
 }
+
+// 清空字幕
+function clearSubtitles() {
+  subtitles.value = [];
+  currentText.value = "";
+}
+
+// 关闭窗口
+async function closeWindow() {
+  if (isRunning.value) {
+    await invoke("stop_recognition");
+  }
+  await appWindow.close();
+}
+
+// 最小化窗口
+async function minimizeWindow() {
+  await appWindow.minimize();
+}
+
+// 开始拖动
+function startDrag() {
+  appWindow.startDragging();
+}
+
+// 监听字幕事件
+let unlistenSubtitle = null;
+let unlistenError = null;
+
+onMounted(async () => {
+  // 检查初始状态
+  try {
+    isRunning.value = await invoke("is_recognition_running");
+  } catch (e) {
+    console.error("Failed to get initial state:", e);
+  }
+
+  // 监听字幕事件
+  unlistenSubtitle = await listen("subtitle", (event) => {
+    const subtitle = event.payload;
+    if (subtitle.text && subtitle.text.trim()) {
+      if (subtitle.is_final) {
+        // 句子结束，添加到历史记录
+        subtitles.value.push({
+          id: Date.now(),
+          text: subtitle.text,
+          timestamp: subtitle.timestamp,
+        });
+        // 保持最大条数
+        if (subtitles.value.length > maxSubtitles) {
+          subtitles.value.shift();
+        }
+        // 清空当前正在识别的文本
+        currentText.value = "";
+      } else {
+        // 中间结果，更新当前正在识别的文本（替换而不是追加）
+        currentText.value = subtitle.text;
+      }
+    }
+  });
+
+  // 监听错误事件
+  unlistenError = await listen("recognition_error", (event) => {
+    errorMessage.value = String(event.payload);
+    isRunning.value = false;
+  });
+
+  // 自动开始识别
+  if (!isRunning.value) {
+    try {
+      await invoke("start_recognition");
+      isRunning.value = true;
+    } catch (e) {
+      errorMessage.value = String(e);
+      console.error("Auto start failed:", e);
+    }
+  }
+});
+
+onUnmounted(() => {
+  if (unlistenSubtitle) unlistenSubtitle();
+  if (unlistenError) unlistenError();
+});
+
+// 最新的字幕（正在识别的文本，或最后一条已完成的）
+const latestSubtitle = computed(() => {
+  if (currentText.value) {
+    return currentText.value;
+  }
+  if (subtitles.value.length === 0) return "";
+  return subtitles.value[subtitles.value.length - 1].text;
+});
+
+// 历史字幕 (已完成的字幕，如果有正在识别的则显示全部，否则除了最后一条)
+const historySubtitles = computed(() => {
+  if (currentText.value) {
+    // 有正在识别的文本，显示所有已完成的字幕
+    return subtitles.value;
+  }
+  // 没有正在识别的文本，最后一条作为最新字幕显示
+  if (subtitles.value.length <= 1) return [];
+  return subtitles.value.slice(0, -1);
+});
 </script>
 
 <template>
-  <main class="container">
-    <h1>Welcome to Tauri + Vue</h1>
-
-    <div class="row">
-      <a href="https://vite.dev" target="_blank">
-        <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-      </a>
-      <a href="https://tauri.app" target="_blank">
-        <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-      </a>
-      <a href="https://vuejs.org/" target="_blank">
-        <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-      </a>
+  <div class="app-container" @mousedown="startDrag">
+    <!-- 标题栏 -->
+    <div class="title-bar">
+      <div class="title">🎤 Live Subtitles</div>
+      <div class="window-controls" @mousedown.stop>
+        <button class="control-btn" @click="minimizeWindow" title="最小化">
+          <span>─</span>
+        </button>
+        <button class="control-btn close-btn" @click="closeWindow" title="关闭">
+          <span>✕</span>
+        </button>
+      </div>
     </div>
-    <p>Click on the Tauri, Vite, and Vue logos to learn more.</p>
 
-    <form class="row" @submit.prevent="greet">
-      <input id="greet-input" v-model="name" placeholder="Enter a name..." />
-      <button type="submit">Greet</button>
-    </form>
-    <p>{{ greetMsg }}</p>
-  </main>
+    <!-- 字幕区域 -->
+    <div class="subtitle-area" @mousedown.stop>
+      <!-- 历史字幕 -->
+      <div class="history-subtitles">
+        <div
+          v-for="sub in historySubtitles"
+          :key="sub.id"
+          class="subtitle-line history"
+        >
+          {{ sub.text }}
+        </div>
+      </div>
+      
+      <!-- 当前字幕 -->
+      <div class="current-subtitle" v-if="latestSubtitle">
+        {{ latestSubtitle }}
+      </div>
+      
+      <!-- 空状态 -->
+      <div class="empty-state" v-else-if="!isRunning">
+        <span>点击开始按钮开始识别</span>
+      </div>
+      <div class="empty-state" v-else>
+        <span>正在聆听...</span>
+      </div>
+
+      <!-- 错误提示 -->
+      <div class="error-message" v-if="errorMessage">
+        {{ errorMessage }}
+      </div>
+    </div>
+
+    <!-- 控制栏 -->
+    <div class="control-bar" @mousedown.stop>
+      <button 
+        class="action-btn" 
+        :class="{ active: isRunning }"
+        @click="toggleRecognition"
+      >
+        {{ isRunning ? '⏹ 停止' : '▶ 开始' }}
+      </button>
+      <button class="action-btn" @click="clearSubtitles">
+        🗑 清空
+      </button>
+    </div>
+  </div>
 </template>
 
-<style scoped>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #249b73);
-}
-
-</style>
 <style>
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-.container {
-  margin: 0;
-  padding-top: 10vh;
+html, body, #app {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: transparent;
+  font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+}
+</style>
+
+<style scoped>
+.app-container {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  text-align: center;
+  height: 100vh;
+  background: rgba(30, 30, 30, 0.85);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  backdrop-filter: blur(10px);
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
+/* 标题栏 */
+.title-bar {
   display: flex;
-  justify-content: center;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.3);
+  cursor: move;
+  user-select: none;
 }
 
-a {
+.title {
+  font-size: 14px;
+  color: #fff;
   font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
 }
 
-a:hover {
-  color: #535bf2;
+.window-controls {
+  display: flex;
+  gap: 8px;
 }
 
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
+.control-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
 }
 
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
+.control-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
-input,
-button {
-  outline: none;
+.close-btn:hover {
+  background: #e81123;
 }
 
-#greet-input {
-  margin-right: 5px;
+/* 字幕区域 */
+.subtitle-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 12px 16px;
+  overflow: hidden;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
+.history-subtitles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.subtitle-line {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.4;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.subtitle-line.history {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.current-subtitle {
+  font-size: 20px;
+  color: #fff;
+  font-weight: 500;
+  line-height: 1.4;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
   }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
+.empty-state {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 14px;
+  text-align: center;
+  padding: 20px;
+}
+
+.error-message {
+  color: #ff6b6b;
+  font-size: 12px;
+  margin-top: 8px;
+  padding: 8px;
+  background: rgba(255, 0, 0, 0.1);
+  border-radius: 4px;
+}
+
+/* 控制栏 */
+.control-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.action-btn {
+  flex: 1;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.action-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.action-btn.active {
+  background: #e81123;
+}
+
+.action-btn.active:hover {
+  background: #c41019;
+}
 </style>

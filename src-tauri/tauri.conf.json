@@ -12,9 +12,15 @@
   "app": {
     "windows": [
       {
-        "title": "live-subtitles",
+        "title": "Live Subtitles",
         "width": 800,
-        "height": 600
+        "height": 200,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "resizable": true,
+        "x": 100,
+        "y": 600
       }
     ],
     "security": {
