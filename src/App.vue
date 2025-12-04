@@ -3,6 +3,14 @@ import { ref, onMounted, onUnmounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  VideoPlay,
+  VideoPause,
+  DocumentCopy,
+  Delete,
+  Minus,
+  Close
+} from "@element-plus/icons-vue";
 
 // 状态
 const isRunning = ref(false);
@@ -156,21 +164,22 @@ const historySubtitles = computed(() => {
       <div class="top-bar-left" @mousedown.stop>
         <button class="action-btn" :class="{ active: isRunning }" @click="toggleRecognition"
           :title="isRunning ? '停止识别' : '开始识别'">
-          {{ isRunning ? '⏹' : '▶' }}
+          <VideoPause v-if="isRunning" />
+          <VideoPlay v-else />
         </button>
         <button class="action-btn" @click="copyAllText" title="复制全部">
-          📋
+          <DocumentCopy />
         </button>
         <button class="action-btn" @click="clearSubtitles" title="清空字幕">
-          🗑
+          <Delete />
         </button>
       </div>
       <div class="top-bar-right" @mousedown.stop>
         <button class="control-btn" @click="minimizeWindow" title="最小化">
-          <span>─</span>
+          <Minus />
         </button>
         <button class="control-btn close-btn" @click="closeWindow" title="关闭">
-          <span>✕</span>
+          <Close />
         </button>
       </div>
     </div>
@@ -281,7 +290,11 @@ body {
   align-items: center;
   justify-content: center;
   transition: background 0.2s;
-  font-size: 12px;
+}
+
+.control-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .control-btn:hover {
@@ -293,14 +306,21 @@ body {
 }
 
 .action-btn {
-  padding: 4px 10px;
+  padding: 4px 8px;
   border: none;
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.15);
   color: #fff;
-  font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.action-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .action-btn:hover {
