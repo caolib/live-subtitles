@@ -84,8 +84,6 @@ fn capture_loopback_audio(
             .GetDefaultAudioEndpoint(eRender, eConsole)
             .map_err(|e| format!("Failed to get default audio endpoint: {}", e))?;
 
-        println!("Got default render device for loopback");
-
         // 激活音频客户端
         let audio_client: IAudioClient = device
             .Activate(CLSCTX_ALL, None)
@@ -100,11 +98,6 @@ fn capture_loopback_audio(
         let source_sample_rate = mix_format.nSamplesPerSec;
         let channels = mix_format.nChannels as usize;
         let bits_per_sample = mix_format.wBitsPerSample;
-
-        println!(
-            "Audio format: {} Hz, {} channels, {} bits",
-            source_sample_rate, channels, bits_per_sample
-        );
 
         // 初始化音频客户端为 loopback 模式
         let buffer_duration = 10_000_000i64; // 1 秒 (100纳秒单位)
@@ -129,14 +122,8 @@ fn capture_loopback_audio(
             .Start()
             .map_err(|e| format!("Failed to start audio client: {}", e))?;
 
-        println!("Started WASAPI loopback capture");
-
         // 创建重采样器
         let resampler = if source_sample_rate != target_sample_rate {
-            println!(
-                "Creating resampler: {} Hz -> {} Hz",
-                source_sample_rate, target_sample_rate
-            );
             // 使用 FftFixedIn，它允许可变输入大小
             let resampler = FftFixedIn::<f32>::new(
                 source_sample_rate as usize,
@@ -146,10 +133,6 @@ fn capture_loopback_audio(
                 1,     // mono channel
             )
             .map_err(|e| format!("Failed to create resampler: {}", e))?;
-            
-            // 获取实际需要的输入帧数
-            let input_frames_needed = resampler.input_frames_next();
-            println!("Resampler needs {} input frames per chunk", input_frames_needed);
             
             Some(Mutex::new(resampler))
         } else {
@@ -165,8 +148,6 @@ fn capture_loopback_audio(
         } else {
             1024
         };
-        let mut total_frames_captured: u64 = 0;
-        let mut log_counter: u64 = 0;
 
         // 捕获循环
         while !*stop_flag.lock().unwrap() {
@@ -230,9 +211,6 @@ fn capture_loopback_audio(
                 };
 
                 audio_buffer.extend(mono_samples);
-
-                // 统计
-                total_frames_captured += num_frames as u64;
                 
                 // 当缓冲区足够大时处理
                 while audio_buffer.len() >= chunk_size {
@@ -257,16 +235,6 @@ fn capture_loopback_audio(
                         chunk
                     };
 
-                    // 每隔一段时间打印日志
-                    log_counter += 1;
-                    if log_counter % 100 == 0 {
-                        let max_amp: f32 = output.iter().map(|s| s.abs()).fold(0.0, f32::max);
-                        println!(
-                            "[WASAPI] Captured {} frames total, output chunk size: {}, max amplitude: {:.4}",
-                            total_frames_captured, output.len(), max_amp
-                        );
-                    }
-
                     if tx.send(output).is_err() {
                         // 接收端已关闭
                         break;
@@ -279,7 +247,6 @@ fn capture_loopback_audio(
         let _ = audio_client.Stop();
         CoUninitialize();
 
-        println!("Stopped WASAPI loopback capture");
         Ok(())
     }
 }

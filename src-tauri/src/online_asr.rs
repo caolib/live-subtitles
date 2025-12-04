@@ -150,8 +150,6 @@ impl OnlineRecognizer {
                 return Err("Failed to create OnlineStream".to_string());
             }
 
-            println!("[OnlineASR] Created OnlineRecognizer successfully");
-
             Ok(Self {
                 recognizer,
                 stream,

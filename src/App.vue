@@ -37,6 +37,20 @@ function clearSubtitles() {
   currentText.value = "";
 }
 
+// 复制所有文本
+async function copyAllText() {
+  const allText = [...subtitles.value.map(s => s.text), currentText.value]
+    .filter(t => t && t.trim())
+    .join('\n');
+  if (allText) {
+    try {
+      await navigator.clipboard.writeText(allText);
+    } catch (e) {
+      console.error('Failed to copy:', e);
+    }
+  }
+}
+
 // 关闭窗口
 async function closeWindow() {
   if (isRunning.value) {
@@ -137,10 +151,25 @@ const historySubtitles = computed(() => {
 
 <template>
   <div class="app-container" @mousedown="startDrag">
-    <!-- 标题栏 -->
-    <div class="title-bar">
-      <div class="title">🎤 Live Subtitles</div>
-      <div class="window-controls" @mousedown.stop>
+    <!-- 顶部控制栏（自动隐藏） -->
+    <div class="top-bar" @mousedown="startDrag">
+      <div class="top-bar-left" @mousedown.stop>
+        <button 
+          class="action-btn" 
+          :class="{ active: isRunning }"
+          @click="toggleRecognition"
+          :title="isRunning ? '停止识别' : '开始识别'"
+        >
+          {{ isRunning ? '⏹' : '▶' }}
+        </button>
+        <button class="action-btn" @click="copyAllText" title="复制全部">
+          📋
+        </button>
+        <button class="action-btn" @click="clearSubtitles" title="清空字幕">
+          🗑
+        </button>
+      </div>
+      <div class="top-bar-right" @mousedown.stop>
         <button class="control-btn" @click="minimizeWindow" title="最小化">
           <span>─</span>
         </button>
@@ -151,19 +180,13 @@ const historySubtitles = computed(() => {
     </div>
 
     <!-- 字幕区域 -->
-    <div class="subtitle-area" @mousedown.stop>
-      <!-- 历史字幕 -->
-      <div class="history-subtitles">
-        <div
-          v-for="sub in historySubtitles"
-          :key="sub.id"
-          class="subtitle-line history"
-        >
-          {{ sub.text }}
-        </div>
+    <div class="subtitle-area">
+      <!-- 历史字幕（合并显示，可滚动） -->
+      <div class="history-text" v-if="historySubtitles.length > 0">
+        {{ historySubtitles.map(s => s.text).join(' ') }}
       </div>
       
-      <!-- 当前字幕 -->
+      <!-- 当前字幕（固定在底部） -->
       <div class="current-subtitle" v-if="latestSubtitle">
         {{ latestSubtitle }}
       </div>
@@ -181,20 +204,6 @@ const historySubtitles = computed(() => {
         {{ errorMessage }}
       </div>
     </div>
-
-    <!-- 控制栏 -->
-    <div class="control-bar" @mousedown.stop>
-      <button 
-        class="action-btn" 
-        :class="{ active: isRunning }"
-        @click="toggleRecognition"
-      >
-        {{ isRunning ? '⏹ 停止' : '▶ 开始' }}
-      </button>
-      <button class="action-btn" @click="clearSubtitles">
-        🗑 清空
-      </button>
-    </div>
   </div>
 </template>
 
@@ -208,11 +217,16 @@ const historySubtitles = computed(() => {
 html, body, #app {
   height: 100%;
   overflow: hidden;
+  background: transparent;
 }
 
 body {
   background: transparent;
-  font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  font-family: 'JetBrains Mono', 'Cascadia Code', '汉仪有圆', '喵字果汁体', 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+}
+
+#app {
+  padding: 4px;
 }
 </style>
 
@@ -220,41 +234,54 @@ body {
 .app-container {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  background: rgba(30, 30, 30, 0.85);
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  height: 100%;
+  background: rgba(30, 30, 30, 0.9);
+  border-radius: 16px;
   overflow: hidden;
   backdrop-filter: blur(10px);
+  cursor: move;
 }
 
-/* 标题栏 */
-.title-bar {
+/* 顶部控制栏（自动隐藏） */
+.top-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.3);
-  cursor: move;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.5);
   user-select: none;
+  opacity: 0;
+  transform: translateY(-100%);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  border-radius: 16px 16px 0 0;
+  cursor: move;
 }
 
-.title {
-  font-size: 14px;
-  color: #fff;
-  font-weight: 500;
+.app-container:hover .top-bar {
+  opacity: 1;
+  transform: translateY(0);
 }
 
-.window-controls {
+.top-bar-left {
   display: flex;
-  gap: 8px;
+  gap: 6px;
+}
+
+.top-bar-right {
+  display: flex;
+  gap: 6px;
 }
 
 .control-btn {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
   cursor: pointer;
@@ -262,6 +289,7 @@ body {
   align-items: center;
   justify-content: center;
   transition: background 0.2s;
+  font-size: 12px;
 }
 
 .control-btn:hover {
@@ -272,6 +300,29 @@ body {
   background: #e81123;
 }
 
+.action-btn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.action-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.action-btn.active {
+  background: #e81123;
+}
+
+.action-btn.active:hover {
+  background: #c41019;
+}
+
 /* 字幕区域 */
 .subtitle-area {
   flex: 1;
@@ -280,25 +331,38 @@ body {
   justify-content: flex-end;
   padding: 12px 16px;
   overflow: hidden;
+  min-height: 0;
 }
 
-.history-subtitles {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-
-.subtitle-line {
-  font-size: 16px;
-  color: rgba(255, 255, 255, 0.6);
-  line-height: 1.4;
-  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
-}
-
-.subtitle-line.history {
+/* 历史字幕可滚动 */
+.history-text {
   font-size: 14px;
   color: rgba(255, 255, 255, 0.4);
+  line-height: 1.5;
+  margin-bottom: 8px;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+  overflow-y: auto;
+  flex-shrink: 1;
+  min-height: 0;
+  max-height: 50%;
+}
+
+/* 自定义滚动条 */
+.history-text::-webkit-scrollbar {
+  width: 6px;
+}
+
+.history-text::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.history-text::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+.history-text::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .current-subtitle {
@@ -337,35 +401,5 @@ body {
   border-radius: 4px;
 }
 
-/* 控制栏 */
-.control-bar {
-  display: flex;
-  gap: 8px;
-  padding: 10px 12px;
-  background: rgba(0, 0, 0, 0.3);
-}
 
-.action-btn {
-  flex: 1;
-  padding: 8px 16px;
-  border: none;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.action-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.action-btn.active {
-  background: #e81123;
-}
-
-.action-btn.active:hover {
-  background: #c41019;
-}
 </style>

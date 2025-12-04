@@ -1,7 +1,6 @@
 // Live Subtitles - 实时字幕应用
 // 基于 Tauri v2 + sherpa-rs
 
-mod asr;
 #[cfg(not(target_os = "windows"))]
 mod audio;
 #[cfg(target_os = "windows")]
@@ -189,7 +188,6 @@ async fn start_recognition(
         match OnlineRecognizer::new(online_config) {
             Ok(recognizer) => {
                 let mut last_text = String::new();
-                let mut sample_count: u64 = 0;
 
                 // 循环处理音频
                 while let Ok(samples) = audio_rx.recv() {
@@ -200,8 +198,6 @@ async fn start_recognition(
                         }
                     }
 
-                    sample_count += samples.len() as u64;
-
                     // 处理音频
                     let (text, is_endpoint) = recognizer.process(&samples);
 
@@ -211,9 +207,6 @@ async fn start_recognition(
                         let event = SubtitleEvent::new(text.clone(), false);
                         let _ = app_handle.emit("subtitle", &event);
                         last_text = text.clone();
-
-                        // 打印调试信息
-                        println!("[ASR] Text: {} (intermediate)", text);
                     }
 
                     // 如果到达 endpoint，发送最终结果并重置流
@@ -221,23 +214,12 @@ async fn start_recognition(
                         // 发送最终结果
                         let event = SubtitleEvent::new(last_text.clone(), true);
                         let _ = app_handle.emit("subtitle", &event);
-                        println!("[ASR] Final: {}", last_text);
 
                         recognizer.reset();
                         last_text.clear();
                     } else if is_endpoint {
                         // 没有文本但检测到 endpoint，只重置
                         recognizer.reset();
-                        println!("[ASR] Endpoint detected (no text), reset stream");
-                    }
-
-                    // 每2秒打印一次状态
-                    if sample_count % (asr_config.sample_rate as u64 * 2) < samples.len() as u64 {
-                        println!(
-                            "[ASR DEBUG] Processed {} samples ({:.1}s)",
-                            sample_count,
-                            sample_count as f32 / asr_config.sample_rate as f32
-                        );
                     }
                 }
             }
@@ -283,12 +265,6 @@ pub fn run() {
         .setup(|app| {
             // 使用 src-tauri/models 目录
             let models_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models");
-
-            println!("Using models directory: {:?}", models_dir);
-
-            if !models_dir.exists() {
-                eprintln!("Warning: models directory does not exist: {:?}", models_dir);
-            }
 
             // 创建应用状态
             let state = Arc::new(AppState::new(models_dir));

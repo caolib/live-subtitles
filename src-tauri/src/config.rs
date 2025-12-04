@@ -51,58 +51,9 @@ fn default_num_threads() -> i32 {
     2
 }
 
-/// VAD 配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VadConfig {
-    /// VAD 模型路径
-    pub model: String,
-    /// 语音检测阈值 (0.0-1.0)
-    #[serde(default = "default_threshold")]
-    pub threshold: f32,
-    /// 最小静音时长 (秒)
-    #[serde(default = "default_min_silence_duration")]
-    pub min_silence_duration: f32,
-    /// 最小语音时长 (秒)
-    #[serde(default = "default_min_speech_duration")]
-    pub min_speech_duration: f32,
-    /// 窗口大小 (采样数)
-    #[serde(default = "default_window_size")]
-    pub window_size: i32,
-}
-
-fn default_threshold() -> f32 {
-    0.3 // 降低阈值以更容易检测到语音
-}
-
-fn default_min_silence_duration() -> f32 {
-    0.5
-}
-
-fn default_min_speech_duration() -> f32 {
-    0.25
-}
-
-fn default_window_size() -> i32 {
-    512
-}
-
-impl Default for VadConfig {
-    fn default() -> Self {
-        Self {
-            model: "silero_vad.onnx".to_string(),
-            threshold: default_threshold(),
-            min_silence_duration: default_min_silence_duration(),
-            min_speech_duration: default_min_speech_duration(),
-            window_size: default_window_size(),
-        }
-    }
-}
-
 /// 应用配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    /// VAD 配置
-    pub vad: VadConfig,
     /// 当前使用的模型 ID
     pub current_model_id: String,
     /// 可用的 ASR 模型列表
@@ -112,7 +63,6 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            vad: VadConfig::default(),
             current_model_id: "tmspeech-zipformer".to_string(),
             models: vec![AsrModelConfig {
                 id: "tmspeech-zipformer".to_string(),
