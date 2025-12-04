@@ -9,11 +9,14 @@ import {
   DocumentCopy,
   Delete,
   Minus,
-  Close
+  Close,
+  Lock,
+  Unlock
 } from "@element-plus/icons-vue";
 
 // 状态
 const isRunning = ref(false);
+const isLocked = ref(false); // 窗口锁定状态
 const subtitles = ref([]); // 已完成的字幕历史
 const currentText = ref(""); // 正在识别的文本（中间结果）
 const maxSubtitles = 5; // 最多显示的字幕条数
@@ -74,7 +77,15 @@ async function minimizeWindow() {
 
 // 开始拖动
 function startDrag() {
-  appWindow.startDragging();
+  if (!isLocked.value) {
+    appWindow.startDragging();
+  }
+}
+
+// 锁定/解锁窗口
+async function toggleLock() {
+  isLocked.value = !isLocked.value;
+  await appWindow.setResizable(!isLocked.value);
 }
 
 // 监听字幕事件
@@ -160,28 +171,43 @@ const historySubtitles = computed(() => {
 <template>
   <div class="app-container">
     <!-- 顶部控制栏（自动隐藏） -->
-    <div class="top-bar" @mousedown="startDrag">
-      <div class="top-bar-left" @mousedown.stop>
-        <button class="action-btn" :class="{ active: isRunning }" @click="toggleRecognition"
-          :title="isRunning ? '停止识别' : '开始识别'">
-          <VideoPause v-if="isRunning" />
-          <VideoPlay v-else />
-        </button>
-        <button class="action-btn" @click="copyAllText" title="复制全部">
-          <DocumentCopy />
-        </button>
-        <button class="action-btn" @click="clearSubtitles" title="清空字幕">
-          <Delete />
-        </button>
-      </div>
-      <div class="top-bar-right" @mousedown.stop>
-        <button class="control-btn" @click="minimizeWindow" title="最小化">
-          <Minus />
-        </button>
-        <button class="control-btn close-btn" @click="closeWindow" title="关闭">
-          <Close />
-        </button>
-      </div>
+    <div class="top-bar" :class="{ locked: isLocked }" @mousedown="startDrag">
+      <!-- 锁定时只显示解锁按钮 -->
+      <template v-if="isLocked">
+        <div class="top-bar-center" @mousedown.stop>
+          <button class="action-btn unlock-btn" @click="toggleLock" title="解锁窗口">
+            <Unlock />
+          </button>
+        </div>
+      </template>
+
+      <!-- 未锁定时显示所有按钮 -->
+      <template v-else>
+        <div class="top-bar-left" @mousedown.stop>
+          <button class="action-btn" :class="{ active: isRunning }" @click="toggleRecognition"
+            :title="isRunning ? '停止识别' : '开始识别'">
+            <VideoPause v-if="isRunning" />
+            <VideoPlay v-else />
+          </button>
+          <button class="action-btn" @click="copyAllText" title="复制全部">
+            <DocumentCopy />
+          </button>
+          <button class="action-btn" @click="clearSubtitles" title="清空字幕">
+            <Delete />
+          </button>
+          <button class="action-btn" @click="toggleLock" title="锁定窗口">
+            <Lock />
+          </button>
+        </div>
+        <div class="top-bar-right" @mousedown.stop>
+          <button class="control-btn" @click="minimizeWindow" title="最小化">
+            <Minus />
+          </button>
+          <button class="control-btn close-btn" @click="closeWindow" title="关闭">
+            <Close />
+          </button>
+        </div>
+      </template>
     </div>
 
     <!-- 字幕区域 -->
@@ -263,6 +289,12 @@ body {
   cursor: move;
 }
 
+/* 锁定时不显示拖动光标 */
+.top-bar.locked {
+  cursor: default;
+  justify-content: center;
+}
+
 .app-container:hover .top-bar {
   opacity: 1;
   transform: translateY(0);
@@ -271,6 +303,19 @@ body {
 .top-bar-left {
   display: flex;
   gap: 6px;
+}
+
+.top-bar-center {
+  display: flex;
+  justify-content: center;
+}
+
+.unlock-btn {
+  background: rgba(64, 158, 255, 0.3) !important;
+}
+
+.unlock-btn:hover {
+  background: rgba(64, 158, 255, 0.5) !important;
 }
 
 .top-bar-right {
