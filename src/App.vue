@@ -62,12 +62,9 @@ async function copyAllText() {
   }
 }
 
-// 关闭窗口
-async function closeWindow() {
-  if (isRunning.value) {
-    await invoke("stop_recognition");
-  }
-  await appWindow.close();
+// 隐藏窗口（不退出应用）
+async function hideWindow() {
+  await appWindow.hide();
 }
 
 // 最小化窗口
@@ -91,6 +88,7 @@ async function toggleLock() {
 // 监听字幕事件
 let unlistenSubtitle = null;
 let unlistenError = null;
+let unlistenClose = null;
 
 onMounted(async () => {
   // 检查初始状态
@@ -99,6 +97,12 @@ onMounted(async () => {
   } catch (e) {
     console.error("Failed to get initial state:", e);
   }
+
+  // 拦截窗口关闭事件，改为隐藏窗口
+  unlistenClose = await appWindow.onCloseRequested(async (event) => {
+    event.preventDefault();
+    await appWindow.hide();
+  });
 
   // 监听字幕事件
   unlistenSubtitle = await listen("subtitle", (event) => {
@@ -145,6 +149,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (unlistenSubtitle) unlistenSubtitle();
   if (unlistenError) unlistenError();
+  if (unlistenClose) unlistenClose();
 });
 
 // 最新的字幕（正在识别的文本，或最后一条已完成的）
@@ -203,7 +208,7 @@ const historySubtitles = computed(() => {
           <button class="control-btn" @click="minimizeWindow" title="最小化">
             <Minus />
           </button>
-          <button class="control-btn close-btn" @click="closeWindow" title="关闭">
+          <button class="control-btn close-btn" @click="hideWindow" title="隐藏到托盘">
             <Close />
           </button>
         </div>

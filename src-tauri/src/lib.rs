@@ -18,7 +18,11 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use tauri::{Emitter, Manager, State};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder,
+};
 
 /// 应用状态
 pub struct AppState {
@@ -73,6 +77,12 @@ async fn get_available_models(_state: State<'_, Arc<AppState>>) -> Result<Vec<St
     // TODO: 扫描 models 目录，返回可用的模型列表
     // 目前只返回默认的 zipformer-small-bilingual
     Ok(vec!["zipformer-small-bilingual".to_string()])
+}
+
+/// 获取模型目录路径
+#[tauri::command]
+async fn get_models_dir(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    Ok(state.models_dir.to_string_lossy().to_string())
 }
 
 /// 获取当前配置
@@ -258,27 +268,131 @@ async fn stop_recognition(state: State<'_, Arc<AppState>>) -> Result<(), String>
     Ok(())
 }
 
+/// 打开设置窗口
+#[tauri::command]
+async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
+    // 检查设置窗口是否已存在
+    if let Some(window) = app.get_webview_window("settings") {
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    // 创建新的设置窗口
+    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
+        .title("设置")
+        .inner_size(600.0, 500.0)
+        .resizable(true)
+        .center()
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// 显示主窗口
+#[tauri::command]
+async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            // 使用 src-tauri/models 目录
-            let models_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models");
+            // 获取模型目录：开发时使用 src-tauri/models，生产环境使用资源目录
+            let models_dir = if cfg!(debug_assertions) {
+                // 开发环境：使用 src-tauri/models
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models")
+            } else {
+                // 生产环境：使用资源目录
+                app.path()
+                    .resource_dir()
+                    .expect("Failed to get resource dir")
+                    .join("models")
+            };
 
             // 创建应用状态
             let state = Arc::new(AppState::new(models_dir));
             app.manage(state);
 
+            // 创建托盘菜单
+            let show_item = MenuItem::with_id(app, "show", "显示字幕窗口", true, None::<&str>)?;
+            let settings_item = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
+
+            // 创建托盘图标
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .tooltip("Live Subtitles - 实时字幕")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "settings" => {
+                        // 检查设置窗口是否已存在
+                        if let Some(window) = app.get_webview_window("settings") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        } else {
+                            // 创建新的设置窗口
+                            let _ = WebviewWindowBuilder::new(
+                                app,
+                                "settings",
+                                WebviewUrl::App("settings.html".into()),
+                            )
+                            .title("设置")
+                            .inner_size(600.0, 500.0)
+                            .resizable(true)
+                            .center()
+                            .build();
+                        }
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_available_models,
+            get_models_dir,
             get_config,
             update_config,
             is_recognition_running,
             start_recognition,
             stop_recognition,
+            open_settings,
+            show_main_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

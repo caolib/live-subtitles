@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Live Subtitles",
         "width": 800,
         "height": 200,
@@ -20,7 +21,8 @@
         "alwaysOnTop": true,
         "resizable": true,
         "x": 100,
-        "y": 600
+        "y": 600,
+        "visible": true
       }
     ],
     "security": {
@@ -36,6 +38,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "models/": "models/"
+    }
   }
 }
