@@ -21,6 +21,12 @@ const modelForm = ref({
     tokens: "",
 });
 
+// 显示设置
+const displaySettings = ref({
+    showHistory: true,
+    maxHistoryLength: 0, // 0 表示无限制
+});
+
 const loading = ref(false);
 const saveStatus = ref("");
 
@@ -29,17 +35,17 @@ async function loadConfig() {
     try {
         // 获取模型目录
         modelsDir.value = await invoke("get_models_dir");
-        
+
         const cfg = await invoke("get_config");
         config.value = cfg;
 
         // 加载当前模型的路径
         const currentModel = cfg.models.find((m) => m.id === cfg.current_model_id);
-        if (currentModel && currentModel.model_type.Transducer) {
+        if (currentModel && currentModel.model_type.type === "Transducer") {
             modelForm.value = {
-                encoder: currentModel.model_type.Transducer.encoder,
-                decoder: currentModel.model_type.Transducer.decoder,
-                joiner: currentModel.model_type.Transducer.joiner,
+                encoder: currentModel.model_type.encoder,
+                decoder: currentModel.model_type.decoder,
+                joiner: currentModel.model_type.joiner,
                 tokens: currentModel.tokens,
             };
         }
@@ -83,11 +89,10 @@ async function saveConfig() {
                     return {
                         ...m,
                         model_type: {
-                            Transducer: {
-                                encoder: modelForm.value.encoder,
-                                decoder: modelForm.value.decoder,
-                                joiner: modelForm.value.joiner,
-                            },
+                            type: "Transducer",
+                            encoder: modelForm.value.encoder,
+                            decoder: modelForm.value.decoder,
+                            joiner: modelForm.value.joiner,
                         },
                         tokens: modelForm.value.tokens,
                     };
@@ -97,6 +102,11 @@ async function saveConfig() {
         };
 
         await invoke("update_config", { config: updatedConfig });
+
+        // 保存显示设置到 localStorage
+        localStorage.setItem('showHistory', displaySettings.value.showHistory.toString());
+        localStorage.setItem('maxHistoryLength', displaySettings.value.maxHistoryLength.toString());
+
         saveStatus.value = "保存成功！";
 
         setTimeout(() => {
@@ -110,8 +120,21 @@ async function saveConfig() {
     }
 }
 
+// 加载显示设置
+function loadDisplaySettings() {
+    const savedShowHistory = localStorage.getItem('showHistory');
+    if (savedShowHistory !== null) {
+        displaySettings.value.showHistory = savedShowHistory === 'true';
+    }
+    const savedMaxLength = localStorage.getItem('maxHistoryLength');
+    if (savedMaxLength !== null) {
+        displaySettings.value.maxHistoryLength = parseInt(savedMaxLength) || 0;
+    }
+}
+
 onMounted(() => {
     loadConfig();
+    loadDisplaySettings();
 });
 </script>
 
@@ -161,6 +184,29 @@ onMounted(() => {
                         <FolderOpened />
                     </button>
                 </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>显示设置</h2>
+            <p class="section-desc">配置字幕显示相关选项</p>
+
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" v-model="displaySettings.showHistory" />
+                    <span>显示历史字幕</span>
+                </label>
+                <p class="field-desc">启用后将在当前字幕上方显示历史识别内容</p>
+            </div>
+
+            <div class="form-group">
+                <label>历史字幕最大长度</label>
+                <div class="number-input">
+                    <input type="number" v-model.number="displaySettings.maxHistoryLength" min="0"
+                        placeholder="0 表示无限制" />
+                    <span class="input-hint">字符</span>
+                </div>
+                <p class="field-desc">设置历史字幕文本的最大显示长度，0 表示无限制</p>
             </div>
         </div>
 
@@ -317,5 +363,55 @@ h2 {
 
 .save-status.success {
     color: #4caf50;
+}
+
+/* 复选框样式 */
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #e0e0e0;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: #0078d4;
+}
+
+/* 数字输入框样式 */
+.number-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.number-input input {
+    width: 120px;
+    padding: 8px 12px;
+    background: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-size: 13px;
+}
+
+.number-input input:focus {
+    outline: none;
+    border-color: #0078d4;
+}
+
+.input-hint {
+    font-size: 13px;
+    color: #888;
+}
+
+.field-desc {
+    font-size: 12px;
+    color: #666;
+    margin-top: 4px;
 }
 </style>

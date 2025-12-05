@@ -11,15 +11,19 @@ import {
   Minus,
   Close,
   Lock,
-  Unlock
+  Unlock,
+  ChatLineSquare,
+  ChatDotSquare
 } from "@element-plus/icons-vue";
 
 // 状态
 const isRunning = ref(false);
 const isLocked = ref(false); // 窗口锁定状态
+const showHistory = ref(true); // 是否显示历史字幕
 const subtitles = ref([]); // 已完成的字幕历史
 const currentText = ref(""); // 正在识别的文本（中间结果）
 const maxSubtitles = 5; // 最多显示的字幕条数
+const maxHistoryLength = ref(0); // 历史字幕最大长度，0表示无限制
 const errorMessage = ref("");
 
 // 拖动相关
@@ -85,12 +89,46 @@ async function toggleLock() {
   await appWindow.setResizable(!isLocked.value);
 }
 
+// 切换历史字幕显示
+function toggleHistory() {
+  showHistory.value = !showHistory.value;
+  // 保存到 localStorage
+  localStorage.setItem('showHistory', showHistory.value.toString());
+}
+
+// 加载显示设置
+function loadDisplaySettings() {
+  const savedShowHistory = localStorage.getItem('showHistory');
+  if (savedShowHistory !== null) {
+    showHistory.value = savedShowHistory === 'true';
+  }
+  const savedMaxLength = localStorage.getItem('maxHistoryLength');
+  if (savedMaxLength !== null) {
+    maxHistoryLength.value = parseInt(savedMaxLength) || 0;
+  }
+}
+
 // 监听字幕事件
 let unlistenSubtitle = null;
 let unlistenError = null;
 let unlistenClose = null;
 
+// 监听 localStorage 变化（设置界面保存时同步）
+function handleStorageChange(event) {
+  if (event.key === 'showHistory') {
+    showHistory.value = event.newValue === 'true';
+  } else if (event.key === 'maxHistoryLength') {
+    maxHistoryLength.value = parseInt(event.newValue) || 0;
+  }
+}
+
 onMounted(async () => {
+  // 加载显示设置
+  loadDisplaySettings();
+
+  // 监听 storage 事件（其他窗口的 localStorage 变化）
+  window.addEventListener('storage', handleStorageChange);
+
   // 检查初始状态
   try {
     isRunning.value = await invoke("is_recognition_running");
@@ -150,6 +188,7 @@ onUnmounted(() => {
   if (unlistenSubtitle) unlistenSubtitle();
   if (unlistenError) unlistenError();
   if (unlistenClose) unlistenClose();
+  window.removeEventListener('storage', handleStorageChange);
 });
 
 // 最新的字幕（正在识别的文本，或最后一条已完成的）
@@ -163,13 +202,27 @@ const latestSubtitle = computed(() => {
 
 // 历史字幕 (已完成的字幕，如果有正在识别的则显示全部，否则除了最后一条)
 const historySubtitles = computed(() => {
+  if (!showHistory.value) return [];
+
+  let history;
   if (currentText.value) {
     // 有正在识别的文本，显示所有已完成的字幕
-    return subtitles.value;
+    history = subtitles.value;
+  } else {
+    // 没有正在识别的文本，最后一条作为最新字幕显示
+    if (subtitles.value.length <= 1) return [];
+    history = subtitles.value.slice(0, -1);
   }
-  // 没有正在识别的文本，最后一条作为最新字幕显示
-  if (subtitles.value.length <= 1) return [];
-  return subtitles.value.slice(0, -1);
+  return history;
+});
+
+// 历史字幕文本（带长度限制）
+const historyText = computed(() => {
+  const text = historySubtitles.value.map(s => s.text).join(' ');
+  if (maxHistoryLength.value > 0 && text.length > maxHistoryLength.value) {
+    return '...' + text.slice(-maxHistoryLength.value);
+  }
+  return text;
 });
 </script>
 
@@ -193,6 +246,11 @@ const historySubtitles = computed(() => {
             :title="isRunning ? '停止识别' : '开始识别'">
             <VideoPause v-if="isRunning" />
             <VideoPlay v-else />
+          </button>
+          <button class="action-btn" :class="{ active: showHistory }" @click="toggleHistory"
+            :title="showHistory ? '隐藏历史' : '显示历史'">
+            <ChatLineSquare v-if="showHistory" />
+            <ChatDotSquare v-else />
           </button>
           <button class="action-btn" @click="copyAllText" title="复制全部">
             <DocumentCopy />
@@ -218,8 +276,8 @@ const historySubtitles = computed(() => {
     <!-- 字幕区域 -->
     <div class="subtitle-area">
       <!-- 历史字幕（合并显示，可滚动） -->
-      <div class="history-text" v-if="historySubtitles.length > 0">
-        {{historySubtitles.map(s => s.text).join(' ')}}
+      <div class="history-text" v-if="historyText">
+        {{ historyText }}
       </div>
 
       <!-- 当前字幕（固定在底部） -->
@@ -280,7 +338,7 @@ body {
   justify-content: space-between;
   align-items: center;
   padding: 6px 10px;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.8);
   user-select: none;
   opacity: 0;
   transform: translateY(-100%);
