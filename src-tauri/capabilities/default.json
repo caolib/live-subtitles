@@ -15,6 +15,23 @@
     "core:window:allow-show",
     "core:window:allow-set-focus",
     "opener:default",
-    "dialog:default"
+    "dialog:default",
+    "fs:default",
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [
+        {
+          "path": "**/*"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [
+        {
+          "path": "**/*"
+        }
+      ]
+    }
   ]
 }

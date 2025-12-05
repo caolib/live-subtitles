@@ -305,6 +305,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             // 获取模型目录：开发时使用 src-tauri/models，生产环境使用资源目录
             let models_dir = if cfg!(debug_assertions) {

@@ -1,8 +1,14 @@
 <script setup>
 import { ref, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
-import { FolderOpened, Check } from "@element-plus/icons-vue";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { documentDir } from "@tauri-apps/api/path";
+import { FolderOpened, Check, Download, Upload, RefreshRight } from "@element-plus/icons-vue";
+import { useSettingsStore } from "./stores/settings";
+
+// Pinia Store
+const settingsStore = useSettingsStore();
 
 // 配置状态
 const config = ref({
@@ -19,12 +25,6 @@ const modelForm = ref({
     decoder: "",
     joiner: "",
     tokens: "",
-});
-
-// 显示设置
-const displaySettings = ref({
-    showHistory: true,
-    maxHistoryLength: 0, // 0 表示无限制
 });
 
 const loading = ref(false);
@@ -75,7 +75,9 @@ async function selectFile(field) {
     }
 }
 
-// 保存配置
+onMounted(() => {
+    loadConfig();
+});
 async function saveConfig() {
     loading.value = true;
     saveStatus.value = "";
@@ -103,9 +105,7 @@ async function saveConfig() {
 
         await invoke("update_config", { config: updatedConfig });
 
-        // 保存显示设置到 localStorage
-        localStorage.setItem('showHistory', displaySettings.value.showHistory.toString());
-        localStorage.setItem('maxHistoryLength', displaySettings.value.maxHistoryLength.toString());
+        // Pinia store 会自动持久化，无需手动保存
 
         saveStatus.value = "保存成功！";
 
@@ -120,21 +120,53 @@ async function saveConfig() {
     }
 }
 
-// 加载显示设置
-function loadDisplaySettings() {
-    const savedShowHistory = localStorage.getItem('showHistory');
-    if (savedShowHistory !== null) {
-        displaySettings.value.showHistory = savedShowHistory === 'true';
+// 导出设置
+async function exportSettings() {
+    try {
+        const docDir = await documentDir();
+        const filePath = await save({
+            defaultPath: `${docDir}/live-subtitles-settings.json`,
+            filters: [{ name: "JSON", extensions: ["json"] }],
+        });
+        if (filePath) {
+            const jsonStr = settingsStore.exportSettings();
+            await writeTextFile(filePath, jsonStr);
+            saveStatus.value = "导出成功！";
+            setTimeout(() => { saveStatus.value = ""; }, 2000);
+        }
+    } catch (e) {
+        saveStatus.value = "导出失败: " + e;
+        console.error("Failed to export settings:", e);
     }
-    const savedMaxLength = localStorage.getItem('maxHistoryLength');
-    if (savedMaxLength !== null) {
-        displaySettings.value.maxHistoryLength = parseInt(savedMaxLength) || 0;
+}
+
+// 导入设置
+async function importSettings() {
+    try {
+        const filePath = await open({
+            filters: [{ name: "JSON", extensions: ["json"] }],
+        });
+        if (filePath) {
+            const jsonStr = await readTextFile(filePath);
+            const result = settingsStore.importSettings(jsonStr);
+            saveStatus.value = result.message;
+            setTimeout(() => { saveStatus.value = ""; }, 2000);
+        }
+    } catch (e) {
+        saveStatus.value = "导入失败: " + e;
+        console.error("Failed to import settings:", e);
     }
+}
+
+// 重置设置
+function resetSettings() {
+    settingsStore.resetToDefaults();
+    saveStatus.value = "已重置为默认值";
+    setTimeout(() => { saveStatus.value = ""; }, 2000);
 }
 
 onMounted(() => {
     loadConfig();
-    loadDisplaySettings();
 });
 </script>
 
@@ -193,7 +225,7 @@ onMounted(() => {
 
             <div class="form-group">
                 <label class="checkbox-label">
-                    <input type="checkbox" v-model="displaySettings.showHistory" />
+                    <input type="checkbox" v-model="settingsStore.showHistory" />
                     <span>显示历史字幕</span>
                 </label>
                 <p class="field-desc">启用后将在当前字幕上方显示历史识别内容</p>
@@ -202,7 +234,7 @@ onMounted(() => {
             <div class="form-group">
                 <label>历史字幕最大长度</label>
                 <div class="number-input">
-                    <input type="number" v-model.number="displaySettings.maxHistoryLength" min="0"
+                    <input type="number" v-model.number="settingsStore.maxHistoryLength" min="0"
                         placeholder="0 表示无限制" />
                     <span class="input-hint">字符</span>
                 </div>
@@ -210,10 +242,30 @@ onMounted(() => {
             </div>
         </div>
 
+        <div class="section">
+            <h2>配置管理</h2>
+            <p class="section-desc">导入、导出或重置配置</p>
+
+            <div class="config-actions">
+                <button class="config-btn" @click="exportSettings" title="导出配置">
+                    <Download />
+                    <span>导出配置</span>
+                </button>
+                <button class="config-btn" @click="importSettings" title="导入配置">
+                    <Upload />
+                    <span>导入配置</span>
+                </button>
+                <button class="config-btn reset-btn" @click="resetSettings" title="重置为默认值">
+                    <RefreshRight />
+                    <span>重置</span>
+                </button>
+            </div>
+        </div>
+
         <div class="actions">
             <button class="save-btn" @click="saveConfig" :disabled="loading">
                 <Check v-if="!loading" />
-                {{ loading ? "保存中..." : "保存设置" }}
+                {{ loading ? "保存中..." : "保存模型配置" }}
             </button>
             <span class="save-status" :class="{ success: saveStatus.includes('成功') }">
                 {{ saveStatus }}
@@ -230,16 +282,22 @@ onMounted(() => {
 }
 
 body {
-    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
     background: #1e1e1e;
     color: #e0e0e0;
     min-height: 100vh;
+}
+
+body,
+input,
+button,
+select,
+textarea {
+    font-family: var(--main-font-family);
 }
 </style>
 
 <style scoped>
 .settings-container {
-    max-width: 600px;
     margin: 0 auto;
     padding: 24px;
 }
@@ -413,5 +471,44 @@ h2 {
     font-size: 12px;
     color: #666;
     margin-top: 4px;
+}
+
+/* 配置管理按钮 */
+.config-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.config-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    background: #3d3d3d;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.config-btn:hover {
+    background: #4d4d4d;
+}
+
+.config-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+.config-btn.reset-btn {
+    border-color: #d32f2f;
+    color: #ff6b6b;
+}
+
+.config-btn.reset-btn:hover {
+    background: rgba(211, 47, 47, 0.2);
 }
 </style>

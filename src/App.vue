@@ -15,15 +15,17 @@ import {
   ChatLineSquare,
   ChatDotSquare
 } from "@element-plus/icons-vue";
+import { useSettingsStore } from "./stores/settings";
+
+// Pinia Store
+const settingsStore = useSettingsStore();
 
 // 状态
 const isRunning = ref(false);
 const isLocked = ref(false); // 窗口锁定状态
-const showHistory = ref(true); // 是否显示历史字幕
 const subtitles = ref([]); // 已完成的字幕历史
 const currentText = ref(""); // 正在识别的文本（中间结果）
 const maxSubtitles = 5; // 最多显示的字幕条数
-const maxHistoryLength = ref(0); // 历史字幕最大长度，0表示无限制
 const errorMessage = ref("");
 
 // 拖动相关
@@ -91,21 +93,7 @@ async function toggleLock() {
 
 // 切换历史字幕显示
 function toggleHistory() {
-  showHistory.value = !showHistory.value;
-  // 保存到 localStorage
-  localStorage.setItem('showHistory', showHistory.value.toString());
-}
-
-// 加载显示设置
-function loadDisplaySettings() {
-  const savedShowHistory = localStorage.getItem('showHistory');
-  if (savedShowHistory !== null) {
-    showHistory.value = savedShowHistory === 'true';
-  }
-  const savedMaxLength = localStorage.getItem('maxHistoryLength');
-  if (savedMaxLength !== null) {
-    maxHistoryLength.value = parseInt(savedMaxLength) || 0;
-  }
+  settingsStore.showHistory = !settingsStore.showHistory;
 }
 
 // 监听字幕事件
@@ -113,21 +101,7 @@ let unlistenSubtitle = null;
 let unlistenError = null;
 let unlistenClose = null;
 
-// 监听 localStorage 变化（设置界面保存时同步）
-function handleStorageChange(event) {
-  if (event.key === 'showHistory') {
-    showHistory.value = event.newValue === 'true';
-  } else if (event.key === 'maxHistoryLength') {
-    maxHistoryLength.value = parseInt(event.newValue) || 0;
-  }
-}
-
 onMounted(async () => {
-  // 加载显示设置
-  loadDisplaySettings();
-
-  // 监听 storage 事件（其他窗口的 localStorage 变化）
-  window.addEventListener('storage', handleStorageChange);
 
   // 检查初始状态
   try {
@@ -188,7 +162,6 @@ onUnmounted(() => {
   if (unlistenSubtitle) unlistenSubtitle();
   if (unlistenError) unlistenError();
   if (unlistenClose) unlistenClose();
-  window.removeEventListener('storage', handleStorageChange);
 });
 
 // 最新的字幕（正在识别的文本，或最后一条已完成的）
@@ -202,7 +175,7 @@ const latestSubtitle = computed(() => {
 
 // 历史字幕 (已完成的字幕，如果有正在识别的则显示全部，否则除了最后一条)
 const historySubtitles = computed(() => {
-  if (!showHistory.value) return [];
+  if (!settingsStore.showHistory) return [];
 
   let history;
   if (currentText.value) {
@@ -219,8 +192,8 @@ const historySubtitles = computed(() => {
 // 历史字幕文本（带长度限制）
 const historyText = computed(() => {
   const text = historySubtitles.value.map(s => s.text).join(' ');
-  if (maxHistoryLength.value > 0 && text.length > maxHistoryLength.value) {
-    return '...' + text.slice(-maxHistoryLength.value);
+  if (settingsStore.maxHistoryLength > 0 && text.length > settingsStore.maxHistoryLength) {
+    return '...' + text.slice(-settingsStore.maxHistoryLength);
   }
   return text;
 });
@@ -247,9 +220,9 @@ const historyText = computed(() => {
             <VideoPause v-if="isRunning" />
             <VideoPlay v-else />
           </button>
-          <button class="action-btn" :class="{ active: showHistory }" @click="toggleHistory"
-            :title="showHistory ? '隐藏历史' : '显示历史'">
-            <ChatLineSquare v-if="showHistory" />
+          <button class="action-btn" :class="{ active: settingsStore.showHistory }" @click="toggleHistory"
+            :title="settingsStore.showHistory ? '隐藏历史' : '显示历史'">
+            <ChatLineSquare v-if="settingsStore.showHistory" />
             <ChatDotSquare v-else />
           </button>
           <button class="action-btn" @click="copyAllText" title="复制全部">
@@ -318,7 +291,7 @@ body,
 
 body {
   background: transparent;
-  font-family: 'JetBrains Mono', 'Cascadia Code', '汉仪有圆', '喵字果汁体', 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--main-font-family);
 }
 </style>
 
