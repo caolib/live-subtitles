@@ -5,4 +5,5 @@ import "./assets/styles/var.css";
 
 const app = createApp(App);
 app.use(pinia);
-app.mount("#app");
+
+app.mount('#app')

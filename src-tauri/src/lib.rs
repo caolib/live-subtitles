@@ -13,6 +13,7 @@ use audio::AudioCapture;
 #[cfg(target_os = "windows")]
 use audio_wasapi::AudioCapture;
 use config::AppConfig;
+use config::ScannedModelFiles;
 use online_asr::{OnlineRecognizer, OnlineRecognizerConfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -98,6 +99,13 @@ async fn update_config(state: State<'_, Arc<AppState>>, config: AppConfig) -> Re
     let mut current_config = state.config.lock().map_err(|e| e.to_string())?;
     *current_config = config;
     Ok(())
+}
+
+/// 扫描模型文件夹，自动识别模型文件
+#[tauri::command]
+async fn scan_model_dir(dir_path: String) -> Result<ScannedModelFiles, String> {
+    let path = PathBuf::from(&dir_path);
+    ScannedModelFiles::scan_directory(&path).ok_or_else(|| format!("无法扫描目录: {}", dir_path))
 }
 
 /// 获取识别状态
@@ -306,6 +314,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             // 获取模型目录：开发时使用 src-tauri/models，生产环境使用资源目录
             let models_dir = if cfg!(debug_assertions) {
@@ -348,15 +357,16 @@ pub fn run() {
                             let _ = window.show();
                             let _ = window.set_focus();
                         } else {
-                            // 创建新的设置窗口
+                            // 创建新的设置窗口（无边框）
                             let _ = WebviewWindowBuilder::new(
                                 app,
                                 "settings",
                                 WebviewUrl::App("settings.html".into()),
                             )
                             .title("设置")
-                            .inner_size(600.0, 500.0)
+                            .inner_size(650.0, 550.0)
                             .resizable(true)
+                            .decorations(false)
                             .center()
                             .build();
                         }
@@ -374,9 +384,27 @@ pub fn run() {
                     } = event
                     {
                         let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                        // 左键点击切换设置窗口显示/隐藏
+                        if let Some(window) = app.get_webview_window("settings") {
+                            if window.is_visible().unwrap_or(false) {
+                                let _ = window.hide();
+                            } else {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        } else {
+                            // 创建新的设置窗口（无边框）
+                            let _ = WebviewWindowBuilder::new(
+                                app,
+                                "settings",
+                                WebviewUrl::App("settings.html".into()),
+                            )
+                            .title("设置")
+                            .inner_size(650.0, 550.0)
+                            .resizable(true)
+                            .decorations(false)
+                            .center()
+                            .build();
                         }
                     }
                 })
@@ -389,6 +417,7 @@ pub fn run() {
             get_models_dir,
             get_config,
             update_config,
+            scan_model_dir,
             is_recognition_running,
             start_recognition,
             stop_recognition,

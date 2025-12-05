@@ -1,25 +1,35 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import vueDevTools from "vite-plugin-vue-devtools";
-import { resolve } from "path";
+import Components from 'unplugin-vue-components/vite';
+import { AntDesignVueResolver } from 'unplugin-vue-components/resolvers';
+
 
 const host = process.env.TAURI_DEV_HOST;
 
-export default defineConfig({
-    plugins: [vue(), vueDevTools()],
+// https://vitejs.dev/config/
+export default defineConfig(async () => ({
+    plugins: [
+        vue(),
+        vueDevTools({ launchEditor: 'code' }),
+        Components({
+            resolvers: [
+                AntDesignVueResolver({
+                    importStyle: false
+                }),
+            ],
+        }),
+    ],
+
+    // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
+    //
+    // 1. prevent vite from obscuring rust errors
     clearScreen: false,
-    build: {
-        rollupOptions: {
-            input: {
-                main: resolve(__dirname, "index.html"),
-                settings: resolve(__dirname, "settings.html"),
-            },
-        },
-    },
+    // 2. tauri expects a fixed port, fail if that port is not available
     server: {
         port: 1420,
         strictPort: true,
-        host: host || "localhost",
+        host: host || false,
         hmr: host
             ? {
                 protocol: "ws",
@@ -28,7 +38,13 @@ export default defineConfig({
             }
             : undefined,
         watch: {
+            // 3. tell vite to ignore watching `src-tauri`
             ignored: ["**/src-tauri/**"],
         },
     },
-});
+    resolve: {
+        alias: {
+            '@': '/src'
+        }
+    }
+}));

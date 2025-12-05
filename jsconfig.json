@@ -1,18 +1,34 @@
 {
 	"compilerOptions": {
-		"target": "ES2020",
+		"target": "ESNext",
 		"module": "ESNext",
-		"moduleResolution": "Node",
+		"moduleResolution": "Bundler",
 		"baseUrl": ".",
 		"paths": {
-			"@/*": ["src/*"]
+			"@/*": [
+				"src/*"
+			]
 		},
 		"allowSyntheticDefaultImports": true,
 		"esModuleInterop": true,
 		"resolveJsonModule": true,
-		"jsx": "react",
-		"checkJs": true
+		"jsx": "preserve",
+		"jsxImportSource": "vue",
+		"strict": true,
+		"noImplicitAny": false,
+		"skipLibCheck": true,
+		"types": [
+			"vite/client"
+		]
 	},
-	"include": ["src/**/*", "types/**/*", "index.html", "vite.config.*"],
-	"exclude": ["node_modules", "dist", "target", ".tauri"]
+	"include": [
+		"src/**/*",
+		"src/**/*.vue",
+		"types/**/*"
+	],
+	"exclude": [
+		"node_modules",
+		"dist",
+		"src-tauri"
+	]
 }

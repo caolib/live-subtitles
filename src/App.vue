@@ -3,18 +3,19 @@ import { ref, onMounted, onUnmounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { restoreStateCurrent, StateFlags } from "@tauri-apps/plugin-window-state";
 import {
-  VideoPlay,
-  VideoPause,
-  DocumentCopy,
-  Delete,
-  Minus,
-  Close,
-  Lock,
-  Unlock,
-  ChatLineSquare,
-  ChatDotSquare
-} from "@element-plus/icons-vue";
+  CaretRightOutlined,
+  PauseOutlined,
+  CopyOutlined,
+  DeleteOutlined,
+  MinusOutlined,
+  CloseOutlined,
+  LockOutlined,
+  UnlockOutlined,
+  MessageOutlined,
+  CommentOutlined
+} from "@ant-design/icons-vue";
 import { useSettingsStore } from "./stores/settings";
 
 // Pinia Store
@@ -102,6 +103,16 @@ let unlistenError = null;
 let unlistenClose = null;
 
 onMounted(async () => {
+
+  // 如果禁用了窗口状态记忆，重置窗口到默认位置
+  if (!settingsStore.rememberWindowState) {
+    try {
+      await appWindow.setSize({ type: 'Physical', width: 800, height: 200 });
+      await appWindow.center();
+    } catch (e) {
+      console.error("Failed to reset window position:", e);
+    }
+  }
 
   // 检查初始状态
   try {
@@ -207,7 +218,7 @@ const historyText = computed(() => {
       <template v-if="isLocked">
         <div class="top-bar-center" @mousedown.stop>
           <button class="action-btn unlock-btn" @click="toggleLock" title="解锁窗口">
-            <Unlock />
+            <UnlockOutlined />
           </button>
         </div>
       </template>
@@ -217,30 +228,30 @@ const historyText = computed(() => {
         <div class="top-bar-left" @mousedown.stop>
           <button class="action-btn" :class="{ active: isRunning }" @click="toggleRecognition"
             :title="isRunning ? '停止识别' : '开始识别'">
-            <VideoPause v-if="isRunning" />
-            <VideoPlay v-else />
+            <PauseOutlined v-if="isRunning" />
+            <CaretRightOutlined v-else />
           </button>
           <button class="action-btn" :class="{ active: settingsStore.showHistory }" @click="toggleHistory"
             :title="settingsStore.showHistory ? '隐藏历史' : '显示历史'">
-            <ChatLineSquare v-if="settingsStore.showHistory" />
-            <ChatDotSquare v-else />
+            <MessageOutlined v-if="settingsStore.showHistory" />
+            <CommentOutlined v-else />
           </button>
           <button class="action-btn" @click="copyAllText" title="复制全部">
-            <DocumentCopy />
+            <CopyOutlined />
           </button>
           <button class="action-btn" @click="clearSubtitles" title="清空字幕">
-            <Delete />
+            <DeleteOutlined />
           </button>
           <button class="action-btn" @click="toggleLock" title="锁定窗口">
-            <Lock />
+            <LockOutlined />
           </button>
         </div>
         <div class="top-bar-right" @mousedown.stop>
           <button class="control-btn" @click="minimizeWindow" title="最小化">
-            <Minus />
+            <MinusOutlined />
           </button>
           <button class="control-btn close-btn" @click="hideWindow" title="隐藏到托盘">
-            <Close />
+            <CloseOutlined />
           </button>
         </div>
       </template>

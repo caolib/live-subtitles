@@ -10,12 +10,18 @@ export const useSettingsStore = defineStore('settings', () => {
     const showHistory = ref(true)
     const maxHistoryLength = ref(0) // 0 表示无限制
 
+    // ========== 主题设置 ==========
+    // 'light' | 'dark' | 'system'
+    const themeMode = ref('system')
+
+    // ========== 窗口设置 ==========
+    const rememberWindowState = ref(true) // 记住窗口位置和大小
+
     // ========== 后续可添加更多设置 ==========
     // 例如：
     // const fontSize = ref(20)
     // const fontFamily = ref('default')
     // const opacity = ref(0.9)
-    // const theme = ref('dark')
 
     // ========== 计算属性 ==========
     // 获取所有可导出的设置
@@ -24,8 +30,13 @@ export const useSettingsStore = defineStore('settings', () => {
             showHistory: showHistory.value,
             maxHistoryLength: maxHistoryLength.value,
         },
+        appearance: {
+            themeMode: themeMode.value,
+        },
+        window: {
+            rememberWindowState: rememberWindowState.value,
+        },
         // 后续添加更多分类
-        // appearance: { fontSize, fontFamily, opacity, theme }
         // audio: { ... }
         // recognition: { ... }
     }))
@@ -41,6 +52,24 @@ export const useSettingsStore = defineStore('settings', () => {
         }
         if (settings.maxHistoryLength !== undefined) {
             maxHistoryLength.value = settings.maxHistoryLength
+        }
+    }
+
+    /**
+     * 更新外观设置
+     */
+    function updateAppearanceSettings(settings) {
+        if (settings.themeMode !== undefined) {
+            themeMode.value = settings.themeMode
+        }
+    }
+
+    /**
+     * 更新窗口设置
+     */
+    function updateWindowSettings(settings) {
+        if (settings.rememberWindowState !== undefined) {
+            rememberWindowState.value = settings.rememberWindowState
         }
     }
 
@@ -73,8 +102,17 @@ export const useSettingsStore = defineStore('settings', () => {
                 updateDisplaySettings(data.settings.display)
             }
 
+            // 导入外观设置
+            if (data.settings.appearance) {
+                updateAppearanceSettings(data.settings.appearance)
+            }
+
+            // 导入窗口设置
+            if (data.settings.window) {
+                updateWindowSettings(data.settings.window)
+            }
+
             // 后续添加更多分类的导入
-            // if (data.settings.appearance) { ... }
             // if (data.settings.audio) { ... }
 
             return { success: true, message: '导入成功' }
@@ -89,6 +127,8 @@ export const useSettingsStore = defineStore('settings', () => {
     function resetToDefaults() {
         showHistory.value = true
         maxHistoryLength.value = 0
+        themeMode.value = 'system'
+        rememberWindowState.value = true
         // 后续添加更多默认值重置
     }
 
@@ -96,12 +136,16 @@ export const useSettingsStore = defineStore('settings', () => {
         // 状态
         showHistory,
         maxHistoryLength,
+        themeMode,
+        rememberWindowState,
 
         // 计算属性
         exportableSettings,
 
         // Actions
         updateDisplaySettings,
+        updateAppearanceSettings,
+        updateWindowSettings,
         exportSettings,
         importSettings,
         resetToDefaults,
@@ -112,6 +156,6 @@ export const useSettingsStore = defineStore('settings', () => {
         key: 'live-subtitles-settings',
         storage: localStorage,
         // 只持久化需要的字段
-        pick: ['showHistory', 'maxHistoryLength'],
+        pick: ['showHistory', 'maxHistoryLength', 'themeMode', 'rememberWindowState'],
     },
 })
