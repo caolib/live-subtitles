@@ -17,7 +17,8 @@ import {
     CloseOutlined,
     ScanOutlined,
     CheckCircleOutlined,
-    CloseCircleOutlined
+    CloseCircleOutlined,
+    InfoCircleOutlined
 } from "@ant-design/icons-vue";
 import { useSettingsStore } from "./stores/settings";
 
@@ -93,6 +94,13 @@ const currentModelDetails = computed(() => {
 
 // 当前选中的模型版本（int8 或 fp32）
 const selectedVariant = ref("int8");
+
+// 关于对话框显示状态
+const aboutVisible = ref(false);
+const appVersion = ref('加载中...');
+const hasUpdate = ref(false);
+const latestVersion = ref('');
+const checkingUpdate = ref(false);
 
 // 检查当前模型配置是否完整
 const isModelComplete = computed(() => {
@@ -510,6 +518,75 @@ async function resetSettings() {
     });
 }
 
+// 获取应用版本
+async function fetchAppVersion() {
+    try {
+        const { getVersion } = await import('@tauri-apps/api/app');
+        appVersion.value = await getVersion();
+    } catch (e) {
+        console.error('Failed to get app version:', e);
+        appVersion.value = '0.1.0';
+    }
+}
+
+// 检查更新
+async function checkForUpdates() {
+    checkingUpdate.value = true;
+    hasUpdate.value = false;
+
+    try {
+        const response = await fetch('https://api.github.com/repos/caolib/live-subtitles/tags');
+        if (!response.ok) {
+            throw new Error('Failed to fetch tags');
+        }
+
+        const tags = await response.json();
+        if (tags && tags.length > 0) {
+            // 获取最新的 tag
+            latestVersion.value = tags[0].name.replace(/^v/, ''); // 移除 'v' 前缀
+
+            // 比较版本
+            const current = appVersion.value;
+            const latest = latestVersion.value;
+
+            if (current !== latest && compareVersions(latest, current) > 0) {
+                hasUpdate.value = true;
+                message.info(`发现新版本: ${latest}`);
+            } else {
+                message.success('已是最新版本');
+            }
+        }
+    } catch (e) {
+        console.error('Failed to check for updates:', e);
+        message.error('检查更新失败');
+    } finally {
+        checkingUpdate.value = false;
+    }
+}
+
+// 比较版本号 (a > b 返回 1, a < b 返回 -1, a == b 返回 0)
+function compareVersions(a, b) {
+    const aParts = a.split('.').map(Number);
+    const bParts = b.split('.').map(Number);
+
+    for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+        const aVal = aParts[i] || 0;
+        const bVal = bParts[i] || 0;
+
+        if (aVal > bVal) return 1;
+        if (aVal < bVal) return -1;
+    }
+
+    return 0;
+}
+
+// 显示关于对话框
+function showAbout() {
+    aboutVisible.value = true;
+    // 自动检查更新
+    checkForUpdates();
+}
+
 // 处理窗口状态记忆开关变化
 async function handleWindowStateChange(checked) {
     if (checked) {
@@ -523,8 +600,9 @@ async function handleWindowStateChange(checked) {
     // 禁用时不需要特别处理，只是下次启动不会恢复
 }
 
-onMounted(() => {
+onMounted(async () => {
     loadConfig();
+    await fetchAppVersion();
 });
 </script>
 
@@ -550,6 +628,19 @@ onMounted(() => {
                     <template #extra>
                         <a-typography-text type="secondary">配置 ASR 语音识别模型</a-typography-text>
                     </template>
+
+                    <!-- 模型下载提示 -->
+                    <a-alert type="info" show-icon style="margin-bottom: 16px;">
+                        <template #message>
+                            <div>模型下载地址：</div>
+                            <div style="margin-top: 4px;">
+                                <a href="https://k2-fsa.github.io/sherpa/onnx/pretrained_models/online-transducer/index.html"
+                                    target="_blank" style="color: #1890ff; margin-right: 16px;">sherpa-onnx 模型列表</a>
+                                <a href="https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models" target="_blank"
+                                    style="color: #1890ff;">GitHub Releases</a>
+                            </div>
+                        </template>
+                    </a-alert>
 
                     <a-form layout="horizontal" class="aligned-form">
                         <!-- 模型根目录 -->
@@ -832,10 +923,65 @@ onMounted(() => {
                             </template>
                             重置
                         </a-button>
+                        <a-button @click="showAbout">
+                            <template #icon>
+                                <InfoCircleOutlined />
+                            </template>
+                            关于
+                        </a-button>
                     </div>
                 </a-affix>
             </div>
         </div>
+
+        <!-- 关于对话框 -->
+        <a-modal v-model:open="aboutVisible" title="Live Subtitles" :width="800" :footer="null">
+            <a-descriptions :column="1" bordered size="small">
+                <a-descriptions-item label="当前版本">
+                    <a-space>
+                        <span>{{ appVersion }}</span>
+                        <a-tag v-if="hasUpdate" color="red">有新版本</a-tag>
+                    </a-space>
+                </a-descriptions-item>
+                <a-descriptions-item label="最新版本" v-if="latestVersion">
+                    <a-space>
+                        <span>{{ latestVersion }}</span>
+                        <a href="https://github.com/caolib/live-subtitles/releases" target="_blank">
+                            查看发布
+                        </a>
+                    </a-space>
+                </a-descriptions-item>
+                <a-descriptions-item label="介绍">
+                    基于 Tauri v2 的实时字幕桌面应用，使用 sherpa-onnx 进行语音识别。
+                </a-descriptions-item>
+                <a-descriptions-item label="仓库地址">
+                    <a href="https://github.com/caolib/live-subtitles" target="_blank">
+                        https://github.com/caolib/live-subtitles
+                    </a>
+                </a-descriptions-item>
+                <a-descriptions-item label="许可证">MIT License</a-descriptions-item>
+            </a-descriptions>
+
+            <a-divider />
+
+            <div>
+                <h4 style="margin-bottom: 12px;">致谢</h4>
+                <a-space direction="vertical" style="width: 100%;">
+                    <div>
+                        <a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank">
+                            sherpa-onnx
+                        </a>
+                        <span style="color: #8c8c8c;"> - 提供语音识别模型</span>
+                    </div>
+                    <div>
+                        <a href="https://github.com/jxlpzqc/TMSpeech" target="_blank">
+                            TMSpeech
+                        </a>
+                        <span style="color: #8c8c8c;"> - 灵感来源</span>
+                    </div>
+                </a-space>
+            </div>
+        </a-modal>
     </a-config-provider>
 </template>
 
