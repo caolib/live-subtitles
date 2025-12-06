@@ -1,10 +1,27 @@
+<h1 align="center">
+<img src=".\src-tauri\icons\128x128.png"/>
+</h1>
+
 <h1 align='center'>Live Subtitles - 实时字幕</h1>
+
+<!-- Keep these links. Translations will automatically update with the README. -->
+简体中文 |
+[English](https://zdoc.app/en/caolib/live-subtitles) | 
+[Deutsch](https://zdoc.app/de/caolib/live-subtitles) | 
+[Español](https://zdoc.app/es/caolib/live-subtitles) | 
+[français](https://zdoc.app/fr/caolib/live-subtitles) | 
+[日本語](https://zdoc.app/ja/caolib/live-subtitles) | 
+[한국어](https://zdoc.app/ko/caolib/live-subtitles) | 
+[Português](https://zdoc.app/pt/caolib/live-subtitles) | 
+[Русский](https://zdoc.app/ru/caolib/live-subtitles)
 
 <p align="center">
   <img src="https://img.shields.io/github/downloads/caolib/live-subtitles/total?labelColor=grey&color=blue" alt="Downloads"/>
   <img src="https://img.shields.io/github/v/release/caolib/live-subtitles?labelColor=grey&color=red" alt="Release"/>
   <img src="https://img.shields.io/github/stars/caolib/live-subtitles" alt="Stars"/>
   <img src="https://img.shields.io/github/downloads/caolib/live-subtitles/latest/total" alt="Latest Downloads"/>
+  <img src="https://img.shields.io/github/license/caolib/live-subtitles
+  " alt="License"/>
 </p>
 
 一个实时字幕工具，基于 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 的 asr 模型完成实时字幕识别。
@@ -52,34 +69,6 @@
 pnpm i
 pnpm start
 ```
-
-## 发布
-
-使用自动化脚本发布新版本：
-
-```powershell
-.\release.ps1
-```
-
-详细发布流程请参考 [发布指南](docs/RELEASE_GUIDE.md)。
-
-### 自动更新配置
-
-应用支持自动检查更新功能。首次发布需要配置签名密钥：
-
-1. 生成密钥对：
-   ```bash
-   cd src-tauri
-   pnpm tauri signer generate -- -w ~/.tauri/live-subtitles.key
-   ```
-
-2. 配置 GitHub Secrets（仓库设置 → Secrets）：
-   - `TAURI_SIGNING_PRIVATE_KEY`: 私钥文件内容
-   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: 私钥密码（如有）
-
-3. 更新 `tauri.conf.json` 中的公钥
-
-详细配置步骤请参考 [更新器配置指南](docs/UPDATER_SETUP.md)。
 
 ## 致谢
 
