@@ -108,6 +108,36 @@ async fn scan_model_dir(dir_path: String) -> Result<ScannedModelFiles, String> {
     ScannedModelFiles::scan_directory(&path).ok_or_else(|| format!("无法扫描目录: {}", dir_path))
 }
 
+/// 扫描模型根目录，返回所有可用的模型列表
+#[tauri::command]
+async fn scan_models_root_dir(root_dir: String) -> Result<Vec<ScannedModelFiles>, String> {
+    let root_path = PathBuf::from(&root_dir);
+
+    if !root_path.is_dir() {
+        return Err(format!("目录不存在: {}", root_dir));
+    }
+
+    let mut models = Vec::new();
+
+    // 遍历根目录下的所有子目录
+    if let Ok(entries) = std::fs::read_dir(&root_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // 扫描每个子目录
+                if let Some(model) = ScannedModelFiles::scan_directory(&path) {
+                    models.push(model);
+                }
+            }
+        }
+    }
+
+    // 按模型名称排序
+    models.sort_by(|a, b| a.model_name.cmp(&b.model_name));
+
+    Ok(models)
+}
+
 /// 获取识别状态
 #[tauri::command]
 async fn is_recognition_running(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
@@ -140,6 +170,40 @@ async fn start_recognition(
         .current_model()
         .ok_or_else(|| "No ASR model configured".to_string())?
         .clone();
+
+    // 打印当前使用的模型信息
+    println!("========================================");
+    println!("Starting recognition with model:");
+    println!("  Model ID: {}", asr_config.id);
+    println!("  Model Name: {}", asr_config.name);
+    println!("  Model Dir: {}", asr_config.model_dir);
+    match &asr_config.model_type {
+        crate::config::AsrModelType::Transducer {
+            encoder,
+            decoder,
+            joiner,
+        } => {
+            println!("  Type: Transducer");
+            println!("  Encoder: {}", encoder);
+            println!("  Decoder: {}", decoder);
+            println!("  Joiner: {}", joiner);
+        }
+        crate::config::AsrModelType::Paraformer { model } => {
+            println!("  Type: Paraformer");
+            println!("  Model: {}", model);
+        }
+        crate::config::AsrModelType::Whisper { encoder, decoder } => {
+            println!("  Type: Whisper");
+            println!("  Encoder: {}", encoder);
+            println!("  Decoder: {}", decoder);
+        }
+        crate::config::AsrModelType::SenseVoice { model } => {
+            println!("  Type: SenseVoice");
+            println!("  Model: {}", model);
+        }
+    }
+    println!("  Tokens: {}", asr_config.tokens);
+    println!("========================================");
 
     // 创建音频捕获
     let mut audio_capture = AudioCapture::new(asr_config.sample_rate);
@@ -286,8 +350,8 @@ async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    // 创建新的设置窗口
-    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
+    // 创建新的设置窗口，使用同一个 index.html 但路由到 /settings
+    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("/settings".into()))
         .title("设置")
         .inner_size(600.0, 500.0)
         .resizable(true)
@@ -427,7 +491,7 @@ pub fn run() {
                             let _ = WebviewWindowBuilder::new(
                                 app,
                                 "settings",
-                                WebviewUrl::App("settings.html".into()),
+                                WebviewUrl::App("/settings".into()),
                             )
                             .title("设置")
                             .inner_size(650.0, 550.0)
@@ -463,7 +527,7 @@ pub fn run() {
                             let _ = WebviewWindowBuilder::new(
                                 app,
                                 "settings",
-                                WebviewUrl::App("settings.html".into()),
+                                WebviewUrl::App("/settings".into()),
                             )
                             .title("设置")
                             .inner_size(650.0, 550.0)
@@ -484,6 +548,7 @@ pub fn run() {
             get_config,
             update_config,
             scan_model_dir,
+            scan_models_root_dir,
             is_recognition_running,
             start_recognition,
             stop_recognition,

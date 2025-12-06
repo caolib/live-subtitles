@@ -6,7 +6,7 @@ import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { documentDir } from "@tauri-apps/api/path";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { saveWindowState, StateFlags } from "@tauri-apps/plugin-window-state";
-import { theme } from "ant-design-vue";
+import { theme, message } from "ant-design-vue";
 import {
     FolderOpenOutlined,
     DownloadOutlined,
@@ -15,7 +15,9 @@ import {
     SaveOutlined,
     MinusOutlined,
     CloseOutlined,
-    ScanOutlined
+    ScanOutlined,
+    CheckCircleOutlined,
+    CloseCircleOutlined
 } from "@ant-design/icons-vue";
 import { useSettingsStore } from "./stores/settings";
 
@@ -70,61 +72,195 @@ const isDark = computed(() => {
     return settingsStore.themeMode === "dark";
 });
 
-// 配置状态
-const config = ref({
-    current_model_id: "",
-    models: [],
-});
+// 默认模型目录（从 Rust 获取）
+const defaultModelsDir = ref("");
 
-// 模型目录
-const modelsDir = ref("");
-
-// 模型配置表单
-const modelForm = ref({
-    modelDir: "",    // 模型文件夹路径
+// 当前选中模型的手动配置
+const currentModelAdvancedForm = ref({
     encoder: "",
     decoder: "",
     joiner: "",
     tokens: "",
 });
 
-// 是否展开高级设置
-const showAdvanced = ref([]);
-
 const loading = ref(false);
-const saveStatus = ref("");
+const scanning = ref(false);
+
+// 当前选中的模型详情
+const currentModelDetails = computed(() => {
+    return settingsStore.availableModels.find(m => m.id === settingsStore.currentModelId);
+});
+
+// 检查当前模型配置是否完整
+const isModelComplete = computed(() => {
+    return currentModelAdvancedForm.value.encoder &&
+        currentModelAdvancedForm.value.decoder &&
+        currentModelAdvancedForm.value.joiner &&
+        currentModelAdvancedForm.value.tokens;
+});
+
+// 获取模型目录前缀
+const modelDirPrefix = computed(() => {
+    if (!currentModelDetails.value) return '';
+    return currentModelDetails.value.model_dir + '\\';
+});
+
+// 检查文件路径是否是自定义的（不在模型目录下）
+function isCustomPath(filePath) {
+    if (!filePath || !modelDirPrefix.value) return false;
+    return !filePath.startsWith(modelDirPrefix.value);
+}
+
+// 获取显示的文件名（如果在模型目录下只显示文件名）
+function getDisplayFileName(filePath) {
+    if (!filePath) return '';
+    if (isCustomPath(filePath)) {
+        return filePath; // 自定义路径显示完整路径
+    }
+    // 在模型目录下，只显示文件名
+    const parts = filePath.split(/[\\/]/);
+    return parts[parts.length - 1];
+}
 
 // 加载配置
 async function loadConfig() {
     try {
-        // 获取模型目录
-        modelsDir.value = await invoke("get_models_dir");
+        // 获取默认模型目录
+        defaultModelsDir.value = await invoke("get_models_dir");
 
-        const cfg = await invoke("get_config");
-        config.value = cfg;
-
-        // 加载当前模型的路径
-        const currentModel = cfg.models.find((m) => m.id === cfg.current_model_id);
-        if (currentModel && currentModel.model_type.type === "Transducer") {
-            modelForm.value = {
-                modelDir: currentModel.model_dir || "",
-                encoder: currentModel.model_type.encoder,
-                decoder: currentModel.model_type.decoder,
-                joiner: currentModel.model_type.joiner,
-                tokens: currentModel.tokens,
-            };
+        // 如果 Pinia 中没有保存过根目录，使用默认目录
+        if (!settingsStore.modelsRootDir) {
+            settingsStore.modelsRootDir = defaultModelsDir.value;
         }
+
+        // 自动扫描模型
+        await scanModelsRootDir();
+
+        // 加载当前模型的高级配置
+        loadCurrentModelAdvancedConfig();
     } catch (e) {
         console.error("Failed to load config:", e);
     }
 }
 
+// 加载当前模型的高级配置到表单
+function loadCurrentModelAdvancedConfig() {
+    const advancedConfig = settingsStore.modelAdvancedConfig[settingsStore.currentModelId];
+    const scannedModel = currentModelDetails.value;
+
+    // 合并配置：优先使用高级配置，如果没有则使用扫描到的值
+    currentModelAdvancedForm.value = {
+        encoder: advancedConfig?.encoder || scannedModel?.encoder || "",
+        decoder: advancedConfig?.decoder || scannedModel?.decoder || "",
+        joiner: advancedConfig?.joiner || scannedModel?.joiner || "",
+        tokens: advancedConfig?.tokens || scannedModel?.tokens || "",
+    };
+}
+
+// 同步当前模型配置到后端
+async function syncModelToBackend() {
+    const currentModel = settingsStore.currentModel;
+    if (!currentModel) return;
+
+    try {
+        const updatedConfig = {
+            current_model_id: currentModel.id,
+            models: [{
+                id: currentModel.id,
+                name: currentModel.model_name,
+                model_dir: currentModel.model_dir,
+                model_type: {
+                    type: "Transducer",
+                    encoder: currentModel.encoder || "",
+                    decoder: currentModel.decoder || "",
+                    joiner: currentModel.joiner || "",
+                },
+                tokens: currentModel.tokens || "",
+                languages: ["zh", "en"],
+                sample_rate: 16000,
+                num_threads: 2,
+            }],
+        };
+        await invoke("update_config", { config: updatedConfig });
+        console.log("Model synced to backend:", currentModel.model_name);
+    } catch (e) {
+        console.error("Failed to sync model to backend:", e);
+    }
+}
+
+// 监听当前模型变化，加载对应的高级配置并同步到后端
+watch(() => settingsStore.currentModelId, async (newId, oldId) => {
+    loadCurrentModelAdvancedConfig();
+    // 只有在实际切换模型时才同步（排除初始加载）
+    if (oldId && newId && oldId !== newId) {
+        const newModelName = settingsStore.currentModel?.model_name;
+        console.log(`Switching model from ${oldId} to ${newId} (${newModelName})`);
+
+        try {
+            // 1. 检查识别是否在运行
+            let wasRunning = false;
+            try {
+                wasRunning = await invoke("is_recognition_running");
+                console.log(`Recognition is ${wasRunning ? 'running' : 'stopped'}`);
+            } catch (e) {
+                console.warn("Failed to check recognition status:", e);
+            }
+
+            // 2. 如果正在运行，先停止
+            if (wasRunning) {
+                console.log("Stopping recognition before switching model...");
+                try {
+                    await invoke("stop_recognition");
+                    // 等待更长时间确保完全停止
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    console.log("Recognition stopped");
+                } catch (e) {
+                    console.error("Failed to stop recognition:", e);
+                    // 继续尝试切换配置
+                }
+            }
+
+            // 3. 切换模型配置
+            console.log("Syncing new model config to backend...");
+            await syncModelToBackend();
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // 4. 如果之前在运行，重新启动
+            if (wasRunning) {
+                console.log("Restarting recognition with new model...");
+                try {
+                    // 确保之前的识别已完全停止
+                    const stillRunning = await invoke("is_recognition_running");
+                    if (stillRunning) {
+                        console.log("Recognition still running, waiting longer...");
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+
+                    await invoke("start_recognition");
+                    console.log("Recognition restarted successfully");
+                } catch (e) {
+                    console.error("Failed to restart recognition:", e);
+                    message.warning(`模型已切换，但自动重启失败: ${e}。请手动点击开始按钮。`);
+                    return;
+                }
+            }
+
+            message.success(`已切换到模型: ${newModelName}`);
+            console.log(`Model switched successfully to: ${newModelName}`);
+        } catch (e) {
+            message.error(`模型切换失败: ${e}`);
+            console.error("Failed to switch model:", e);
+        }
+    }
+});
+
 // 选择文件
 async function selectFile(field) {
     try {
+        const modelDir = currentModelDetails.value?.model_dir || settingsStore.modelsRootDir;
         const selected = await open({
             multiple: false,
-            defaultPath: modelForm.value.modelDir || modelsDir.value,
+            defaultPath: modelDir,
             filters: [
                 {
                     name: field === "tokens" ? "Tokens" : "ONNX Model",
@@ -133,109 +269,92 @@ async function selectFile(field) {
             ],
         });
         if (selected) {
-            modelForm.value[field] = selected;
+            currentModelAdvancedForm.value[field] = selected;
         }
     } catch (e) {
         console.error("Failed to select file:", e);
     }
 }
 
-// 选择模型文件夹
-async function selectModelDir() {
+// 选择模型根目录
+async function selectModelsRootDir() {
     try {
         const selected = await open({
             directory: true,
             multiple: false,
-            defaultPath: modelsDir.value,
+            defaultPath: settingsStore.modelsRootDir || defaultModelsDir.value,
         });
         if (selected) {
-            modelForm.value.modelDir = selected;
-            // 自动扫描模型文件
-            await scanModelFiles();
+            settingsStore.modelsRootDir = selected;
+            // 自动扫描模型
+            await scanModelsRootDir();
         }
     } catch (e) {
         console.error("Failed to select directory:", e);
     }
 }
 
-// 扫描模型文件
-async function scanModelFiles() {
-    if (!modelForm.value.modelDir) {
-        saveStatus.value = "请先选择模型文件夹";
-        setTimeout(() => { saveStatus.value = ""; }, 2000);
+// 扫描模型根目录
+async function scanModelsRootDir() {
+    if (!settingsStore.modelsRootDir) {
+        message.warning("请先设置模型根目录");
         return;
     }
 
+    scanning.value = true;
     try {
-        const result = await invoke("scan_model_dir", { dirPath: modelForm.value.modelDir });
+        const models = await invoke("scan_models_root_dir", { rootDir: settingsStore.modelsRootDir });
+        settingsStore.setAvailableModels(models);
 
-        // 自动填充扫描到的文件
-        if (result.encoder) modelForm.value.encoder = result.encoder;
-        if (result.decoder) modelForm.value.decoder = result.decoder;
-        if (result.joiner) modelForm.value.joiner = result.joiner;
-        if (result.tokens) modelForm.value.tokens = result.tokens;
-
-        // 检查是否完整
-        const missing = [];
-        if (!result.encoder) missing.push("encoder");
-        if (!result.decoder) missing.push("decoder");
-        if (!result.joiner) missing.push("joiner");
-        if (!result.tokens) missing.push("tokens");
-
-        if (missing.length === 0) {
-            saveStatus.value = `已识别模型: ${result.model_name}`;
+        const completeCount = models.filter(m => m.is_complete).length;
+        if (models.length === 0) {
+            message.warning("未找到任何模型文件夹");
         } else {
-            saveStatus.value = `部分文件未找到: ${missing.join(", ")}，请手动设置`;
-            showAdvanced.value = ['advanced'];
+            message.success(`找到 ${models.length} 个模型，其中 ${completeCount} 个完整`);
         }
-        setTimeout(() => { saveStatus.value = ""; }, 3000);
     } catch (e) {
-        saveStatus.value = "扫描失败: " + e;
-        console.error("Failed to scan model dir:", e);
-        setTimeout(() => { saveStatus.value = ""; }, 2000);
+        message.error("扫描失败: " + e);
+        console.error("Failed to scan models root dir:", e);
+    } finally {
+        scanning.value = false;
     }
 }
 
 onMounted(() => {
     loadConfig();
 });
+
+// 保存高级配置
+function saveAdvancedConfig() {
+    if (settingsStore.currentModelId) {
+        settingsStore.setModelAdvancedConfig(settingsStore.currentModelId, {
+            encoder: currentModelAdvancedForm.value.encoder,
+            decoder: currentModelAdvancedForm.value.decoder,
+            joiner: currentModelAdvancedForm.value.joiner,
+            tokens: currentModelAdvancedForm.value.tokens,
+        });
+    }
+}
+
 async function saveConfig() {
     loading.value = true;
-    saveStatus.value = "";
 
     try {
-        // 更新模型配置
-        const updatedConfig = {
-            ...config.value,
-            models: config.value.models.map((m) => {
-                if (m.id === config.value.current_model_id) {
-                    return {
-                        ...m,
-                        model_dir: modelForm.value.modelDir,
-                        model_type: {
-                            type: "Transducer",
-                            encoder: modelForm.value.encoder,
-                            decoder: modelForm.value.decoder,
-                            joiner: modelForm.value.joiner,
-                        },
-                        tokens: modelForm.value.tokens,
-                    };
-                }
-                return m;
-            }),
-        };
+        // 保存高级配置到 Pinia
+        saveAdvancedConfig();
 
-        await invoke("update_config", { config: updatedConfig });
+        // 获取当前选中的完整模型配置
+        const currentModel = settingsStore.currentModel;
+        if (!currentModel) {
+            throw new Error("请先选择一个模型");
+        }
 
-        // Pinia store 会自动持久化，无需手动保存
+        // 同步到后端
+        await syncModelToBackend();
 
-        saveStatus.value = "保存成功！";
-
-        setTimeout(() => {
-            saveStatus.value = "";
-        }, 2000);
+        message.success("保存成功！");
     } catch (e) {
-        saveStatus.value = "保存失败: " + e;
+        message.error("保存失败: " + e);
         console.error("Failed to save config:", e);
     } finally {
         loading.value = false;
@@ -253,11 +372,10 @@ async function exportSettings() {
         if (filePath) {
             const jsonStr = settingsStore.exportSettings();
             await writeTextFile(filePath, jsonStr);
-            saveStatus.value = "导出成功！";
-            setTimeout(() => { saveStatus.value = ""; }, 2000);
+            message.success("导出成功！");
         }
     } catch (e) {
-        saveStatus.value = "导出失败: " + e;
+        message.error("导出失败: " + e);
         console.error("Failed to export settings:", e);
     }
 }
@@ -271,11 +389,14 @@ async function importSettings() {
         if (filePath) {
             const jsonStr = await readTextFile(filePath);
             const result = settingsStore.importSettings(jsonStr);
-            saveStatus.value = result.message;
-            setTimeout(() => { saveStatus.value = ""; }, 2000);
+            if (result.success) {
+                message.success(result.message);
+            } else {
+                message.error(result.message);
+            }
         }
     } catch (e) {
-        saveStatus.value = "导入失败: " + e;
+        message.error("导入失败: " + e);
         console.error("Failed to import settings:", e);
     }
 }
@@ -283,8 +404,7 @@ async function importSettings() {
 // 重置设置
 function resetSettings() {
     settingsStore.resetToDefaults();
-    saveStatus.value = "已重置为默认值";
-    setTimeout(() => { saveStatus.value = ""; }, 2000);
+    message.success("已重置为默认值");
 }
 
 // 处理窗口状态记忆开关变化
@@ -329,16 +449,17 @@ onMounted(() => {
                     </template>
 
                     <a-form layout="horizontal" class="aligned-form">
+                        <!-- 模型根目录 -->
                         <div class="form-item-with-hint">
-                            <a-form-item label="模型文件夹">
+                            <a-form-item label="模型根目录">
                                 <a-input-group compact class="full-width-input-group">
-                                    <a-input v-model:value="modelForm.modelDir" placeholder="选择模型文件夹路径" />
-                                    <a-button @click="selectModelDir">
+                                    <a-input v-model:value="settingsStore.modelsRootDir" placeholder="选择模型根目录路径" />
+                                    <a-button @click="selectModelsRootDir">
                                         <template #icon>
                                             <FolderOpenOutlined />
                                         </template>
                                     </a-button>
-                                    <a-button @click="scanModelFiles" title="重新扫描">
+                                    <a-button @click="scanModelsRootDir" :loading="scanning" title="重新扫描">
                                         <template #icon>
                                             <ScanOutlined />
                                         </template>
@@ -347,59 +468,147 @@ onMounted(() => {
                             </a-form-item>
                             <div class="full-width-hint">
                                 <a-typography-text type="secondary" class="field-hint">
-                                    选择包含模型文件的文件夹，将自动识别 encoder、decoder、joiner 和 tokens 文件
+                                    设置模型根目录，该目录下的每个子文件夹将被识别为一个模型
                                 </a-typography-text>
                             </div>
                         </div>
 
-                        <!-- 高级设置折叠面板 -->
-                        <a-collapse v-model:activeKey="showAdvanced" ghost class="advanced-collapse">
-                            <a-collapse-panel key="advanced" header="高级设置（手动配置模型文件路径）">
-                                <a-form-item label="Encoder">
-                                    <a-input-group compact class="full-width-input-group">
-                                        <a-input v-model:value="modelForm.encoder" placeholder="encoder.onnx" />
-                                        <a-button @click="selectFile('encoder')">
-                                            <template #icon>
-                                                <FolderOpenOutlined />
-                                            </template>
-                                        </a-button>
-                                    </a-input-group>
-                                </a-form-item>
+                        <!-- 模型选择 -->
+                        <div class="form-item-with-hint">
+                            <a-form-item label="选择模型">
+                                <a-select v-model:value="settingsStore.currentModelId" style="width: 100%"
+                                    placeholder="请先扫描模型目录" :options="settingsStore.availableModels.map(m => ({
+                                        value: m.id,
+                                        label: m.model_name + (m.is_complete ? ' ✓' : ' (不完整)')
+                                    }))" />
+                            </a-form-item>
+                            <div class="full-width-hint">
+                                <a-typography-text type="secondary" class="field-hint">
+                                    已扫描到 {{ settingsStore.availableModels.length }} 个模型，
+                                    其中 {{settingsStore.availableModels.filter(m => m.is_complete).length}} 个完整可用
+                                </a-typography-text>
+                            </div>
+                        </div>
 
-                                <a-form-item label="Decoder">
-                                    <a-input-group compact class="full-width-input-group">
-                                        <a-input v-model:value="modelForm.decoder" placeholder="decoder.onnx" />
-                                        <a-button @click="selectFile('decoder')">
-                                            <template #icon>
-                                                <FolderOpenOutlined />
-                                            </template>
-                                        </a-button>
-                                    </a-input-group>
-                                </a-form-item>
+                        <!-- 当前模型配置（可编辑） -->
+                        <div v-if="currentModelDetails" class="model-config-section">
+                            <a-divider orientation="left" orientation-margin="0">
+                                <span class="divider-title">模型文件配置</span>
+                            </a-divider>
 
-                                <a-form-item label="Joiner">
-                                    <a-input-group compact class="full-width-input-group">
-                                        <a-input v-model:value="modelForm.joiner" placeholder="joiner.onnx" />
-                                        <a-button @click="selectFile('joiner')">
-                                            <template #icon>
-                                                <FolderOpenOutlined />
-                                            </template>
-                                        </a-button>
-                                    </a-input-group>
-                                </a-form-item>
+                            <a-form-item label="模型目录">
+                                <a-input :value="currentModelDetails.model_dir" disabled />
+                            </a-form-item>
 
-                                <a-form-item label="Tokens">
-                                    <a-input-group compact class="full-width-input-group">
-                                        <a-input v-model:value="modelForm.tokens" placeholder="tokens.txt" />
-                                        <a-button @click="selectFile('tokens')">
+                            <a-form-item label="Encoder">
+                                <a-input-group compact class="full-width-input-group">
+                                    <a-tooltip :title="currentModelAdvancedForm.encoder || '未配置'" placement="top">
+                                        <a-input :value="getDisplayFileName(currentModelAdvancedForm.encoder)"
+                                            @update:value="v => currentModelAdvancedForm.encoder = v.includes('\\') || v.includes('/') ? v : (modelDirPrefix + v)"
+                                            placeholder="encoder.onnx"
+                                            :status="currentModelAdvancedForm.encoder ? '' : 'error'" />
+                                    </a-tooltip>
+                                    <a-tooltip :title="currentModelAdvancedForm.encoder ? '已配置' : '未找到'">
+                                        <a-button :type="currentModelAdvancedForm.encoder ? 'default' : 'default'"
+                                            :danger="!currentModelAdvancedForm.encoder">
                                             <template #icon>
-                                                <FolderOpenOutlined />
+                                                <CheckCircleOutlined v-if="currentModelAdvancedForm.encoder"
+                                                    style="color: #52c41a" />
+                                                <CloseCircleOutlined v-else style="color: #ff4d4f" />
                                             </template>
                                         </a-button>
-                                    </a-input-group>
-                                </a-form-item>
-                            </a-collapse-panel>
-                        </a-collapse>
+                                    </a-tooltip>
+                                    <a-button @click="selectFile('encoder')" title="选择文件">
+                                        <template #icon>
+                                            <FolderOpenOutlined />
+                                        </template>
+                                    </a-button>
+                                </a-input-group>
+                            </a-form-item>
+
+                            <a-form-item label="Decoder">
+                                <a-input-group compact class="full-width-input-group">
+                                    <a-tooltip :title="currentModelAdvancedForm.decoder || '未配置'" placement="top">
+                                        <a-input :value="getDisplayFileName(currentModelAdvancedForm.decoder)"
+                                            @update:value="v => currentModelAdvancedForm.decoder = v.includes('\\') || v.includes('/') ? v : (modelDirPrefix + v)"
+                                            placeholder="decoder.onnx"
+                                            :status="currentModelAdvancedForm.decoder ? '' : 'error'" />
+                                    </a-tooltip>
+                                    <a-tooltip :title="currentModelAdvancedForm.decoder ? '已配置' : '未找到'">
+                                        <a-button :type="currentModelAdvancedForm.decoder ? 'default' : 'default'"
+                                            :danger="!currentModelAdvancedForm.decoder">
+                                            <template #icon>
+                                                <CheckCircleOutlined v-if="currentModelAdvancedForm.decoder"
+                                                    style="color: #52c41a" />
+                                                <CloseCircleOutlined v-else style="color: #ff4d4f" />
+                                            </template>
+                                        </a-button>
+                                    </a-tooltip>
+                                    <a-button @click="selectFile('decoder')" title="选择文件">
+                                        <template #icon>
+                                            <FolderOpenOutlined />
+                                        </template>
+                                    </a-button>
+                                </a-input-group>
+                            </a-form-item>
+
+                            <a-form-item label="Joiner">
+                                <a-input-group compact class="full-width-input-group">
+                                    <a-tooltip :title="currentModelAdvancedForm.joiner || '未配置'" placement="top">
+                                        <a-input :value="getDisplayFileName(currentModelAdvancedForm.joiner)"
+                                            @update:value="v => currentModelAdvancedForm.joiner = v.includes('\\') || v.includes('/') ? v : (modelDirPrefix + v)"
+                                            placeholder="joiner.onnx"
+                                            :status="currentModelAdvancedForm.joiner ? '' : 'error'" />
+                                    </a-tooltip>
+                                    <a-tooltip :title="currentModelAdvancedForm.joiner ? '已配置' : '未找到'">
+                                        <a-button :type="currentModelAdvancedForm.joiner ? 'default' : 'default'"
+                                            :danger="!currentModelAdvancedForm.joiner">
+                                            <template #icon>
+                                                <CheckCircleOutlined v-if="currentModelAdvancedForm.joiner"
+                                                    style="color: #52c41a" />
+                                                <CloseCircleOutlined v-else style="color: #ff4d4f" />
+                                            </template>
+                                        </a-button>
+                                    </a-tooltip>
+                                    <a-button @click="selectFile('joiner')" title="选择文件">
+                                        <template #icon>
+                                            <FolderOpenOutlined />
+                                        </template>
+                                    </a-button>
+                                </a-input-group>
+                            </a-form-item>
+
+                            <a-form-item label="Tokens">
+                                <a-input-group compact class="full-width-input-group">
+                                    <a-tooltip :title="currentModelAdvancedForm.tokens || '未配置'" placement="top">
+                                        <a-input :value="getDisplayFileName(currentModelAdvancedForm.tokens)"
+                                            @update:value="v => currentModelAdvancedForm.tokens = v.includes('\\') || v.includes('/') ? v : (modelDirPrefix + v)"
+                                            placeholder="tokens.txt"
+                                            :status="currentModelAdvancedForm.tokens ? '' : 'error'" />
+                                    </a-tooltip>
+                                    <a-tooltip :title="currentModelAdvancedForm.tokens ? '已配置' : '未找到'">
+                                        <a-button :type="currentModelAdvancedForm.tokens ? 'default' : 'default'"
+                                            :danger="!currentModelAdvancedForm.tokens">
+                                            <template #icon>
+                                                <CheckCircleOutlined v-if="currentModelAdvancedForm.tokens"
+                                                    style="color: #52c41a" />
+                                                <CloseCircleOutlined v-else style="color: #ff4d4f" />
+                                            </template>
+                                        </a-button>
+                                    </a-tooltip>
+                                    <a-button @click="selectFile('tokens')" title="选择文件">
+                                        <template #icon>
+                                            <FolderOpenOutlined />
+                                        </template>
+                                    </a-button>
+                                </a-input-group>
+                            </a-form-item>
+
+                            <div class="model-status-summary">
+                                <a-alert :type="isModelComplete ? 'success' : 'warning'"
+                                    :message="isModelComplete ? '模型配置完整，可以使用' : '模型配置不完整，请检查缺失的文件'" show-icon />
+                            </div>
+                        </div>
                     </a-form>
                 </a-card>
 
@@ -474,9 +683,6 @@ onMounted(() => {
                             </template>
                             {{ loading ? "保存中..." : "保存" }}
                         </a-button>
-                        <a-typography-text v-if="saveStatus" :type="saveStatus.includes('成功') ? 'success' : 'danger'">
-                            {{ saveStatus }}
-                        </a-typography-text>
                         <a-button @click="exportSettings">
                             <template #icon>
                                 <DownloadOutlined />
@@ -689,18 +895,23 @@ textarea {
     color: rgba(255, 255, 255, 0.45);
 }
 
-/* 高级设置折叠面板 */
-.advanced-collapse {
-    margin-top: 8px;
+/* 模型配置区域 */
+.model-config-section {
+    margin-top: 16px;
+    padding-top: 8px;
 }
 
-.advanced-collapse :deep(.ant-collapse-header) {
-    padding: 8px 0 !important;
-    color: #1890ff !important;
+.model-config-section .divider-title {
+    font-size: 13px;
+    color: rgba(0, 0, 0, 0.65);
 }
 
-.advanced-collapse :deep(.ant-collapse-content-box) {
-    padding: 16px 0 0 0 !important;
+.dark-mode .model-config-section .divider-title {
+    color: rgba(255, 255, 255, 0.65);
+}
+
+.model-status-summary {
+    margin-top: 16px;
 }
 
 /* 输入框组全宽 */

@@ -56,6 +56,12 @@ fn default_num_threads() -> i32 {
 /// 扫描模型文件夹的结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScannedModelFiles {
+    /// 模型 ID（目录名）
+    pub id: String,
+    /// 模型文件夹名称（作为模型名称）
+    pub model_name: String,
+    /// 模型文件夹完整路径
+    pub model_dir: String,
     /// 检测到的 encoder 文件
     pub encoder: Option<String>,
     /// 检测到的 decoder 文件
@@ -64,8 +70,8 @@ pub struct ScannedModelFiles {
     pub joiner: Option<String>,
     /// 检测到的 tokens 文件
     pub tokens: Option<String>,
-    /// 模型文件夹名称（作为模型名称）
-    pub model_name: String,
+    /// 是否是完整的模型（包含所有必需文件）
+    pub is_complete: bool,
 }
 
 impl ScannedModelFiles {
@@ -81,12 +87,17 @@ impl ScannedModelFiles {
             .unwrap_or("unknown")
             .to_string();
 
+        let model_dir = dir.to_string_lossy().to_string();
+
         let mut result = ScannedModelFiles {
+            id: model_name.clone(),
+            model_name,
+            model_dir,
             encoder: None,
             decoder: None,
             joiner: None,
             tokens: None,
-            model_name,
+            is_complete: false,
         };
 
         // 遍历目录中的文件
@@ -116,15 +127,13 @@ impl ScannedModelFiles {
             }
         }
 
-        Some(result)
-    }
+        // 计算是否完整
+        result.is_complete = result.encoder.is_some()
+            && result.decoder.is_some()
+            && result.joiner.is_some()
+            && result.tokens.is_some();
 
-    /// 检查是否是完整的 Transducer 模型
-    pub fn is_complete_transducer(&self) -> bool {
-        self.encoder.is_some()
-            && self.decoder.is_some()
-            && self.joiner.is_some()
-            && self.tokens.is_some()
+        Some(result)
     }
 }
 

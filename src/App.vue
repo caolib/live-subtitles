@@ -1,11 +1,10 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { restoreStateCurrent, StateFlags } from "@tauri-apps/plugin-window-state";
 import { readTextFile } from "@tauri-apps/plugin-fs";
-import { watch } from "@tauri-apps/plugin-fs";
 import {
   CaretRightOutlined,
   PauseOutlined,
@@ -19,6 +18,7 @@ import {
   CommentOutlined,
   FormatPainterOutlined
 } from "@ant-design/icons-vue";
+import { Select } from "ant-design-vue";
 import { useSettingsStore } from "./stores/settings";
 
 // Pinia Store
@@ -31,11 +31,35 @@ const subtitles = ref([]); // 已完成的字幕历史
 const currentText = ref(""); // 正在识别的文本（中间结果）
 const maxSubtitles = 5; // 最多显示的字幕条数
 const errorMessage = ref("");
+const isHovering = ref(false); // 鼠标是否在窗口上
+const isSelectOpen = ref(false); // 下拉列表是否打开
+
+// 当前模型名称 - 现在直接从 store computed，因为是同一个 Vue 实例
+const currentModelName = computed(() => {
+  return settingsStore.currentModel?.model_name || '未配置模型';
+});
+
+// 可用模型列表
+const modelOptions = computed(() => {
+  return settingsStore.availableModels.map(m => ({
+    label: m.model_name + (m.is_complete ? ' ✓' : ' (不完整)'),
+    value: m.id,
+    disabled: !m.is_complete
+  }));
+});
+
+// 切换模型
+async function switchModel(modelId) {
+  if (modelId === settingsStore.currentModelId) return;
+
+  console.log(`Switching to model: ${modelId}`);
+  settingsStore.currentModelId = modelId;
+  // 模型切换逻辑已在 Settings.vue 的 watch 中处理，会自动同步
+};
 
 // 自定义样式
 const customStyleElement = ref(null);
 const stylePath = ref("");
-let unwatchStyle = null;
 
 // 加载外部 CSS 样式
 async function loadCustomStyle() {
@@ -62,20 +86,32 @@ function applyCustomStyle(cssContent) {
   customStyleElement.value = style;
 }
 
-// 监听样式文件变化
+// 监听样式文件变化（使用轮询方式）
+let styleWatchInterval = null;
+let lastStyleContent = "";
+
 async function watchStyleFile() {
   if (!stylePath.value) return;
 
   try {
-    unwatchStyle = await watch(stylePath.value, async (event) => {
-      // 文件被修改时重新加载样式
-      if (event.type && (event.type.modify || event.type === "modify")) {
-        console.log("Style file changed, reloading...");
-        await loadCustomStyle();
+    // 记录初始内容
+    lastStyleContent = await readTextFile(stylePath.value);
+
+    // 每2秒检查一次文件变化
+    styleWatchInterval = setInterval(async () => {
+      try {
+        const currentContent = await readTextFile(stylePath.value);
+        if (currentContent !== lastStyleContent) {
+          console.log("Style file changed, reloading...");
+          lastStyleContent = currentContent;
+          applyCustomStyle(currentContent);
+        }
+      } catch (e) {
+        // 文件可能正在被写入，忽略错误
       }
-    }, { recursive: false });
+    }, 2000);
   } catch (e) {
-    console.error("Failed to watch style file:", e);
+    console.error("Failed to setup style file watch:", e);
   }
 }
 
@@ -85,6 +121,40 @@ async function openStyleEditor() {
     await invoke("open_style_editor");
   } catch (e) {
     console.error("Failed to open style editor:", e);
+  }
+}
+
+// 同步模型配置到后端
+async function syncModelConfigToBackend() {
+  const currentModel = settingsStore.currentModel;
+  if (!currentModel) {
+    console.log("No model configured, skipping sync");
+    return;
+  }
+
+  try {
+    const config = {
+      current_model_id: currentModel.id,
+      models: [{
+        id: currentModel.id,
+        name: currentModel.model_name,
+        model_dir: currentModel.model_dir,
+        model_type: {
+          type: "Transducer",
+          encoder: currentModel.encoder || "",
+          decoder: currentModel.decoder || "",
+          joiner: currentModel.joiner || "",
+        },
+        tokens: currentModel.tokens || "",
+        languages: ["zh", "en"],
+        sample_rate: 16000,
+        num_threads: 2,
+      }],
+    };
+    await invoke("update_config", { config });
+    console.log("Model config synced to backend:", currentModel.model_name);
+  } catch (e) {
+    console.error("Failed to sync model config:", e);
   }
 }
 
@@ -167,6 +237,9 @@ onMounted(async () => {
   // 监听样式文件变化
   await watchStyleFile();
 
+  // 如果有持久化的模型配置，同步到 Rust 后端
+  await syncModelConfigToBackend();
+
   // 如果禁用了窗口状态记忆，重置窗口到默认位置
   if (!settingsStore.rememberWindowState) {
     try {
@@ -220,15 +293,19 @@ onMounted(async () => {
     isRunning.value = false;
   });
 
-  // 自动开始识别
-  if (!isRunning.value) {
+  // 自动开始识别（仅在有配置的情况下）
+  if (!isRunning.value && settingsStore.currentModel) {
     try {
       await invoke("start_recognition");
       isRunning.value = true;
     } catch (e) {
+      // 如果启动失败，可能是配置问题
       errorMessage.value = String(e);
       console.error("Auto start failed:", e);
+      // 不是致命错误，用户可以手动启动
     }
+  } else if (!settingsStore.currentModel) {
+    console.log("No model configured, skipping auto start");
   }
 });
 
@@ -237,7 +314,7 @@ onUnmounted(() => {
   if (unlistenError) unlistenError();
   if (unlistenClose) unlistenClose();
   // 清理样式文件监听
-  if (unwatchStyle) unwatchStyle();
+  if (styleWatchInterval) clearInterval(styleWatchInterval);
   // 移除自定义样式元素
   if (customStyleElement.value) {
     customStyleElement.value.remove();
@@ -330,7 +407,7 @@ const historyText = computed(() => {
     </div>
 
     <!-- 字幕区域 -->
-    <div class="subtitle-area">
+    <div class="subtitle-area" @mouseenter="isHovering = true" @mouseleave="isHovering = false">
       <!-- 历史字幕（合并显示，可滚动） -->
       <div class="history-text" v-if="historyText">
         {{ historyText }}
@@ -352,6 +429,14 @@ const historyText = computed(() => {
       <!-- 错误提示 -->
       <div class="error-message" v-if="errorMessage">
         {{ errorMessage }}
+      </div>
+
+      <!-- 模型下拉列表（右下角，悬停时显示） -->
+      <div class="model-selector" v-show="isHovering || isSelectOpen" @mousedown.stop @mouseenter="isHovering = true"
+        @mouseleave="isHovering = false">
+        <Select v-model:value="settingsStore.currentModelId" :options="modelOptions" placeholder="选择模型" size="small"
+          @change="switchModel" @dropdownVisibleChange="isSelectOpen = $event"
+          :getPopupContainer="(trigger) => trigger.parentElement" />
       </div>
     </div>
   </div>

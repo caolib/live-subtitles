@@ -17,6 +17,12 @@ export const useSettingsStore = defineStore('settings', () => {
     // ========== 窗口设置 ==========
     const rememberWindowState = ref(true) // 记住窗口位置和大小
 
+    // ========== 模型设置 ==========
+    const modelsRootDir = ref('') // 模型根目录
+    const currentModelId = ref('') // 当前选中的模型 ID（目录名）
+    const availableModels = ref([]) // 可用的模型列表 [{id, name, encoder, decoder, joiner, tokens, isComplete}]
+    const modelAdvancedConfig = ref({}) // 高级配置：每个模型的手动覆盖配置 {modelId: {encoder, decoder, joiner, tokens}}
+
     // ========== 后续可添加更多设置 ==========
     // 例如：
     // const fontSize = ref(20)
@@ -24,6 +30,25 @@ export const useSettingsStore = defineStore('settings', () => {
     // const opacity = ref(0.9)
 
     // ========== 计算属性 ==========
+    // 获取当前选中的模型配置
+    const currentModel = computed(() => {
+        const model = availableModels.value.find(m => m.id === currentModelId.value)
+        if (!model) return null
+
+        // 如果有高级配置覆盖，合并配置
+        const advancedConfig = modelAdvancedConfig.value[model.id]
+        if (advancedConfig) {
+            return {
+                ...model,
+                encoder: advancedConfig.encoder || model.encoder,
+                decoder: advancedConfig.decoder || model.decoder,
+                joiner: advancedConfig.joiner || model.joiner,
+                tokens: advancedConfig.tokens || model.tokens,
+            }
+        }
+        return model
+    })
+
     // 获取所有可导出的设置
     const exportableSettings = computed(() => ({
         display: {
@@ -36,9 +61,11 @@ export const useSettingsStore = defineStore('settings', () => {
         window: {
             rememberWindowState: rememberWindowState.value,
         },
-        // 后续添加更多分类
-        // audio: { ... }
-        // recognition: { ... }
+        model: {
+            modelsRootDir: modelsRootDir.value,
+            currentModelId: currentModelId.value,
+            modelAdvancedConfig: modelAdvancedConfig.value,
+        },
     }))
 
     // ========== Actions ==========
@@ -70,6 +97,49 @@ export const useSettingsStore = defineStore('settings', () => {
     function updateWindowSettings(settings) {
         if (settings.rememberWindowState !== undefined) {
             rememberWindowState.value = settings.rememberWindowState
+        }
+    }
+
+    /**
+     * 更新模型设置
+     */
+    function updateModelSettings(settings) {
+        if (settings.modelsRootDir !== undefined) {
+            modelsRootDir.value = settings.modelsRootDir
+        }
+        if (settings.currentModelId !== undefined) {
+            currentModelId.value = settings.currentModelId
+        }
+        if (settings.modelAdvancedConfig !== undefined) {
+            modelAdvancedConfig.value = settings.modelAdvancedConfig
+        }
+    }
+
+    /**
+     * 设置可用模型列表（从扫描结果更新）
+     */
+    function setAvailableModels(models) {
+        availableModels.value = models
+        // 如果当前选中的模型不在列表中，自动选择第一个完整的模型
+        if (!models.find(m => m.id === currentModelId.value)) {
+            const firstComplete = models.find(m => m.isComplete)
+            if (firstComplete) {
+                currentModelId.value = firstComplete.id
+            } else if (models.length > 0) {
+                currentModelId.value = models[0].id
+            } else {
+                currentModelId.value = ''
+            }
+        }
+    }
+
+    /**
+     * 设置当前模型的高级配置
+     */
+    function setModelAdvancedConfig(modelId, config) {
+        modelAdvancedConfig.value = {
+            ...modelAdvancedConfig.value,
+            [modelId]: config
         }
     }
 
@@ -112,8 +182,10 @@ export const useSettingsStore = defineStore('settings', () => {
                 updateWindowSettings(data.settings.window)
             }
 
-            // 后续添加更多分类的导入
-            // if (data.settings.audio) { ... }
+            // 导入模型设置
+            if (data.settings.model) {
+                updateModelSettings(data.settings.model)
+            }
 
             return { success: true, message: '导入成功' }
         } catch (e) {
@@ -129,7 +201,10 @@ export const useSettingsStore = defineStore('settings', () => {
         maxHistoryLength.value = 0
         themeMode.value = 'system'
         rememberWindowState.value = true
-        // 后续添加更多默认值重置
+        modelsRootDir.value = ''
+        currentModelId.value = ''
+        availableModels.value = []
+        modelAdvancedConfig.value = {}
     }
 
     return {
@@ -138,14 +213,22 @@ export const useSettingsStore = defineStore('settings', () => {
         maxHistoryLength,
         themeMode,
         rememberWindowState,
+        modelsRootDir,
+        currentModelId,
+        availableModels,
+        modelAdvancedConfig,
 
         // 计算属性
+        currentModel,
         exportableSettings,
 
         // Actions
         updateDisplaySettings,
         updateAppearanceSettings,
         updateWindowSettings,
+        updateModelSettings,
+        setAvailableModels,
+        setModelAdvancedConfig,
         exportSettings,
         importSettings,
         resetToDefaults,
@@ -155,7 +238,16 @@ export const useSettingsStore = defineStore('settings', () => {
     persist: {
         key: 'live-subtitles-settings',
         storage: localStorage,
-        // 只持久化需要的字段
-        pick: ['showHistory', 'maxHistoryLength', 'themeMode', 'rememberWindowState'],
+        // 持久化所有需要保存的字段
+        pick: [
+            'showHistory',
+            'maxHistoryLength',
+            'themeMode',
+            'rememberWindowState',
+            'modelsRootDir',
+            'currentModelId',
+            'availableModels',
+            'modelAdvancedConfig'
+        ],
     },
 })
