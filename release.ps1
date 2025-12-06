@@ -32,30 +32,32 @@ function Show-InteractiveMenu {
     }
     
     Write-Host ""
-    Write-Host "使用 ↑↓ 键选择，Enter 确认，Esc 取消" -ForegroundColor Gray
+    Write-Host "使用 ↑↓ 选择，回车确认，ESC 退出" -ForegroundColor Yellow
     
-    # 交互选择
     while ($true) {
-        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         
-        if ($key.VirtualKeyCode -eq 27) {  # Esc
-            return -1
+        switch ($key.VirtualKeyCode) {
+            38 { # 上箭头
+                $selectedIndex = if ($selectedIndex -eq 0) { $Options.Length - 1 } else { $selectedIndex - 1 }
+            }
+            40 { # 下箭头
+                $selectedIndex = if ($selectedIndex -eq $Options.Length - 1) { 0 } else { $selectedIndex + 1 }
+            }
+            13 { # 回车
+                return $selectedIndex
+            }
+            27 { # ESC
+                return -1
+            }
+            default {
+                continue # 忽略其他按键，不重绘
+            }
         }
         
-        if ($key.VirtualKeyCode -eq 13) {  # Enter
-            return $selectedIndex
-        }
-        
-        if ($key.VirtualKeyCode -eq 38) {  # Up Arrow
-            $selectedIndex = ($selectedIndex - 1 + $Options.Length) % $Options.Length
-        }
-        
-        if ($key.VirtualKeyCode -eq 40) {  # Down Arrow
-            $selectedIndex = ($selectedIndex + 1) % $Options.Length
-        }
-        
-        # 只在选择项变化时重绘
+        # 只在选择发生变化时重绘菜单选项
         if ($selectedIndex -ne $lastSelectedIndex) {
+            # 移动光标到菜单开始位置
             [Console]::SetCursorPosition(0, $menuStartRow)
             
             # 重绘菜单选项
@@ -78,17 +80,16 @@ try {
     if ($LASTEXITCODE -eq 0 -and $latestTag) {
         Write-Host "当前最新的标签: $latestTag" -ForegroundColor Green
         
-        # 解析版本号 (去除 v 前缀)
-        $versionNum = $latestTag -replace '^v', ''
-        if ($versionNum -match '^(\d+)\.(\d+)\.(\d+)') {
+        # 解析版本号 (支持 v1.2.3 格式)
+        if ($latestTag -match '^v?(\d+)\.(\d+)\.(\d+)') {
             $major = [int]$matches[1]
             $minor = [int]$matches[2]
             $patch = [int]$matches[3]
             
             # 生成预设版本选项
-            $patchVersion = "$major.$minor.$($patch + 1)"
-            $minorVersion = "$major.$($minor + 1).0"
-            $majorVersion = "$($major + 1).0.0"
+            $patchVersion = "v$major.$minor.$($patch + 1)"
+            $minorVersion = "v$major.$($minor + 1).0"
+            $majorVersion = "v$($major + 1).0.0"
             
             $options = @(
                 "$patchVersion (补丁版本 - bug修复)",
@@ -109,151 +110,97 @@ try {
                 1 { $Version = $minorVersion }
                 2 { $Version = $majorVersion }
                 3 { 
-                    $Version = Read-Host "请输入版本号 (例如: 1.2.3)"
+                    Clear-Host
+                    $Version = Read-Host "请手动输入版本号"
                 }
             }
+        } else {
+            Write-Host "无法解析当前标签格式，请手动输入版本号" -ForegroundColor Yellow
+            $Version = Read-Host "请输入版本号"
         }
+    } else {
+        Write-Host "未找到任何标签，这可能是第一个版本" -ForegroundColor Yellow
+        Write-Host "建议使用 v1.0.0 作为第一个版本" -ForegroundColor Cyan
+        $Version = Read-Host "请输入版本号 (建议: v1.0.0)"
     }
 } catch {
-    # 忽略错误，继续执行
+    Write-Host "获取标签信息失败，请手动输入版本号" -ForegroundColor Yellow
+    $Version = Read-Host "请输入版本号"
 }
 
-# 如果还没有版本号，提示输入
+# 如果没有提供版本号参数，则提示用户输入
 if (-not $Version) {
-    $Version = Read-Host "请输入版本号 (例如: 0.1.0)"
+    $Version = Read-Host "请输入版本号"
 }
 
-# 验证版本号格式
-if ($Version -notmatch '^\d+\.\d+\.\d+$') {
-    Write-Host "错误: 版本号格式不正确，应该是 x.y.z 格式 (例如: 0.1.0)" -ForegroundColor Red
+# 验证版本号不为空
+if (-not $Version) {
+    Write-Host "错误: 版本号不能为空" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "即将发布版本: $Version" -ForegroundColor Green
+# 去掉版本号前缀v（如果有的话）
+$VersionNumber = $Version -replace '^v', ''
 #endregion
 
-#region 更新版本号
-Write-Host ""
-Write-Host "正在更新版本号..." -ForegroundColor Cyan
-
-# 更新 tauri.conf.json
-$configPath = "src-tauri\tauri.conf.json"
-$config = Get-Content $configPath -Raw | ConvertFrom-Json
-$config.version = $Version
-$config | ConvertTo-Json -Depth 100 | Set-Content $configPath -Encoding UTF8
-
-# 更新 Cargo.toml
-$cargoPath = "src-tauri\Cargo.toml"
-$cargoContent = Get-Content $cargoPath -Raw
-$cargoContent = $cargoContent -replace 'version\s*=\s*"[^"]*"', "version = `"$Version`""
-$cargoContent | Set-Content $cargoPath -Encoding UTF8 -NoNewline
-
-# 更新 package.json
-$packagePath = "package.json"
-$package = Get-Content $packagePath -Raw | ConvertFrom-Json
-$package.version = $Version
-$package | ConvertTo-Json -Depth 100 | Set-Content $packagePath -Encoding UTF8
-
-Write-Host "✓ 版本号已更新为 $Version" -ForegroundColor Green
+#region 模块导入
+# 导入所有发布相关的模块
+. "$PSScriptRoot\scripts\version-manager.ps1"
+. "$PSScriptRoot\scripts\git-manager.ps1"
+. "$PSScriptRoot\scripts\release-generator.ps1"
+. "$PSScriptRoot\scripts\release-workflow.ps1"
 #endregion
 
-#region 生成发布说明
-Write-Host ""
-Write-Host "正在生成发布说明..." -ForegroundColor Cyan
+#region 主执行流程
+# 发布流程菜单选择
+$workflowOptions = @(
+    "执行完整发布流程",
+    "1. 版本号准备与更新",
+    "2. 生成发布信息", 
+    "3. 提交更改",
+    "4. 推送代码",
+    "5. 打标签并推送"
+)
 
-$releaseNotes = @"
-## 版本 $Version
+# 使用传入的版本号作为标签（例如 v1.2.1）
+$displayVersion = $Version
+$tagVersion = $Version
+Write-Host "当前为桌面端发布，将使用标签: $tagVersion" -ForegroundColor Cyan
 
-### 更新内容
+$workflowChoice = Show-InteractiveMenu -Options $workflowOptions -Title "桌面端发布流程菜单 - 版本: $displayVersion (标签: $tagVersion)"
 
-- 待补充...
-
-### 修复
-
-- 待补充...
-
----
-📋 [查看完整更新日志](https://github.com/caolib/live-subtitles/compare/v$Version...main)
-"@
-
-# 创建 docs 目录（如果不存在）
-$docsPath = "docs"
-if (-not (Test-Path $docsPath)) {
-    New-Item -ItemType Directory -Path $docsPath | Out-Null
+if ($workflowChoice -eq -1) {
+    Write-Host "已取消发布流程。" -ForegroundColor Yellow
+    exit 0
 }
 
-$releaseNotesPath = "$docsPath\RELEASE.md"
-$releaseNotes | Set-Content $releaseNotesPath -Encoding UTF8
-
-Write-Host "✓ 发布说明已生成: $releaseNotesPath" -ForegroundColor Green
-Write-Host ""
-Write-Host "请编辑 $releaseNotesPath 文件，添加具体的更新内容" -ForegroundColor Yellow
-Write-Host "编辑完成后按 Enter 继续..." -ForegroundColor Yellow
-Read-Host
-#endregion
-
-#region 提交并推送
-Write-Host ""
-Write-Host "正在提交更改..." -ForegroundColor Cyan
-
-git add .
-git commit -m "chore: 发布版本 $Version"
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "错误: 提交失败" -ForegroundColor Red
+try {
+    switch ($workflowChoice) {
+        0 {
+            # 执行完整流程
+            Invoke-PreparationAndVersionBumping -VersionNumber $VersionNumber
+            # 使用不带前缀的版本号生成发布信息
+            Invoke-ReleaseInformationGeneration -Version $Version
+            Write-Host "请审查 docs/RELEASE.md 发布信息，修改后按回车继续..." -ForegroundColor Yellow
+            Read-Host | Out-Null
+            Invoke-CommitChanges -Version $Version
+            Invoke-PushCodeChanges
+            Invoke-TaggingAndPushTag -Version $tagVersion
+            Write-Host "🎉 所有操作执行完成！桌面端版本 $displayVersion (标签: $tagVersion) 已发布" -ForegroundColor Green
+        }
+        1 { Invoke-PreparationAndVersionBumping -VersionNumber $VersionNumber }
+        2 { 
+            # 使用不带前缀的版本号生成发布信息
+            Invoke-ReleaseInformationGeneration -Version $Version 
+        }
+        3 { Invoke-CommitChanges -Version $Version }
+        4 { Invoke-PushCodeChanges }
+    5 { Invoke-TaggingAndPushTag -Version $tagVersion }
+    }
+}
+catch {
+    Write-Host "执行过程中发生错误: $($_.Exception.Message)" -ForegroundColor Red
+    Invoke-CleanupOnError -Version $Version
     exit 1
 }
-
-Write-Host "✓ 更改已提交" -ForegroundColor Green
-
-Write-Host ""
-Write-Host "正在推送到远程仓库..." -ForegroundColor Cyan
-
-git push
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "错误: 推送失败" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "✓ 代码已推送" -ForegroundColor Green
-#endregion
-
-#region 创建并推送标签
-Write-Host ""
-Write-Host "正在创建标签 $Version..." -ForegroundColor Cyan
-
-git tag $Version
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "错误: 创建标签失败" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "✓ 标签已创建" -ForegroundColor Green
-
-Write-Host ""
-Write-Host "正在推送标签..." -ForegroundColor Cyan
-
-git push origin $Version
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "错误: 推送标签失败" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "✓ 标签已推送" -ForegroundColor Green
-#endregion
-
-#region 完成
-Write-Host ""
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "🎉 版本 $Version 发布流程完成！" -ForegroundColor Green
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "后续步骤:" -ForegroundColor Yellow
-Write-Host "1. 访问 https://github.com/caolib/live-subtitles/actions 查看构建进度" -ForegroundColor White
-Write-Host "2. 构建完成后，在 https://github.com/caolib/live-subtitles/releases 查看发布" -ForegroundColor White
-Write-Host "3. 验证安装包和 latest.json 文件是否正确生成" -ForegroundColor White
-Write-Host ""
 #endregion
