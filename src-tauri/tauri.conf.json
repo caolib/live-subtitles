@@ -40,9 +40,9 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "binaries/*.dll": ".",
-      "styles/": "styles/",
-      "models/": "models/"
+      "resources/binaries/*.dll": ".",
+      "resources/styles/": "styles/",
+      "resources/models/": "models/"
     },
     "createUpdaterArtifacts": false
   }

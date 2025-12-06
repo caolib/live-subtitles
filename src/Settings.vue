@@ -91,6 +91,9 @@ const currentModelDetails = computed(() => {
     return settingsStore.availableModels.find(m => m.id === settingsStore.currentModelId);
 });
 
+// 当前选中的模型版本（int8 或 fp32）
+const selectedVariant = ref("int8");
+
 // 检查当前模型配置是否完整
 const isModelComplete = computed(() => {
     return currentModelAdvancedForm.value.encoder &&
@@ -145,16 +148,91 @@ async function loadConfig() {
 
 // 加载当前模型的高级配置到表单
 function loadCurrentModelAdvancedConfig() {
+    const currentModel = currentModelDetails.value;
+    if (currentModel) {
+        // 如果有多个版本，初始化 selectedVariant
+        if (currentModel.has_multiple_variants && currentModel.variants?.length > 0) {
+            // 默认选择 int8 版本（如果存在）
+            const hasInt8 = currentModel.variants.some(v => v.variant_name === 'int8');
+            selectedVariant.value = hasInt8 ? 'int8' : currentModel.variants[0].variant_name;
+        }
+
+        // 从选中的版本加载配置
+        loadVariantConfig();
+    }
+}
+
+// 从当前选中的版本加载配置
+function loadVariantConfig() {
     const advancedConfig = settingsStore.modelAdvancedConfig[settingsStore.currentModelId];
     const scannedModel = currentModelDetails.value;
 
-    // 合并配置：优先使用高级配置，如果没有则使用扫描到的值
+    let encoder = "", decoder = "", joiner = "";
+
+    // 如果有多个版本，从选中的版本加载
+    if (scannedModel?.has_multiple_variants && scannedModel.variants?.length > 0) {
+        const variant = scannedModel.variants.find(v => v.variant_name === selectedVariant.value);
+        if (variant) {
+            encoder = variant.encoder;
+            decoder = variant.decoder;
+            joiner = variant.joiner;
+        }
+    } else {
+        // 单版本：使用扫描到的默认值
+        encoder = scannedModel?.encoder || "";
+        decoder = scannedModel?.decoder || "";
+        joiner = scannedModel?.joiner || "";
+    }
+
+    // 版本切换时不使用高级配置覆盖，确保路径更新
+    // 只有 tokens 使用高级配置（因为 tokens 文件是共用的）
     currentModelAdvancedForm.value = {
-        encoder: advancedConfig?.encoder || scannedModel?.encoder || "",
-        decoder: advancedConfig?.decoder || scannedModel?.decoder || "",
-        joiner: advancedConfig?.joiner || scannedModel?.joiner || "",
+        encoder: encoder,
+        decoder: decoder,
+        joiner: joiner,
         tokens: advancedConfig?.tokens || scannedModel?.tokens || "",
     };
+}
+
+// 切换模型版本
+async function switchModelVariant(variantName) {
+    console.log('Switching model variant to:', variantName);
+    selectedVariant.value = variantName;
+
+    // 重新加载配置（会更新 currentModelAdvancedForm）
+    loadVariantConfig();
+
+    // 保存到高级配置（保存新版本的路径）
+    settingsStore.modelAdvancedConfig[settingsStore.currentModelId] = {
+        encoder: currentModelAdvancedForm.value.encoder,
+        decoder: currentModelAdvancedForm.value.decoder,
+        joiner: currentModelAdvancedForm.value.joiner,
+        tokens: currentModelAdvancedForm.value.tokens,
+    };
+
+    // 检查识别是否正在运行
+    const wasRunning = await invoke("is_recognition_running");
+
+    // 同步模型配置到后端
+    await syncModelToBackend();
+
+    // 仅在识别运行时才停止并重启，暂停状态下只切换不启动
+    if (wasRunning) {
+        try {
+            await invoke("stop_recognition");
+            console.log("Recognition stopped for variant switch");
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            await invoke("start_recognition");
+            console.log("Recognition restarted with new variant");
+            message.success(`已切换到 ${variantName === 'int8' ? '快速版本（int8）' : '精确版本（fp32）'}`);
+        } catch (e) {
+            console.error("Failed to restart recognition:", e);
+            message.warning(`版本已切换，但自动重启失败: ${e}。请手动点击开始按钮。`);
+        }
+    } else {
+        message.success(`已切换到 ${variantName === 'int8' ? '快速版本（int8）' : '精确版本（fp32）'}，下次启动时生效`);
+    }
 }
 
 // 同步当前模型配置到后端
@@ -417,9 +495,19 @@ async function importSettings() {
 }
 
 // 重置设置
-function resetSettings() {
-    settingsStore.resetToDefaults();
-    message.success("已重置为默认值");
+async function resetSettings() {
+    const { Modal } = await import('ant-design-vue');
+    Modal.confirm({
+        title: '确认重置',
+        content: '确定要将所有设置恢复为默认值吗？此操作不可撤销。',
+        okText: '确认',
+        cancelText: '取消',
+        okType: 'danger',
+        onOk() {
+            settingsStore.resetToDefaults();
+            message.success("已重置为默认值");
+        },
+    });
 }
 
 // 处理窗口状态记忆开关变化
@@ -496,13 +584,39 @@ onMounted(() => {
                                     @change="(value) => console.log('Select changed to:', value, 'Store value:', settingsStore.currentModelId)"
                                     :options="settingsStore.availableModels.map(m => ({
                                         value: m.id,
-                                        label: m.model_name + (m.is_complete ? ' ✓' : ' (不完整)')
+                                        label: m.model_name + (m.is_complete ? ' ✓' : ' (不完整)') + (m.has_multiple_variants ? ' 📦' : '')
                                     }))" />
                             </a-form-item>
                             <div class="full-width-hint">
                                 <a-typography-text type="secondary" class="field-hint">
                                     已扫描到 {{ settingsStore.availableModels.length }} 个模型，
                                     其中 {{settingsStore.availableModels.filter(m => m.is_complete).length}} 个完整可用
+                                    <span v-if="currentModelDetails?.has_multiple_variants"> · 📦 此模型有多个版本可选</span>
+                                </a-typography-text>
+                            </div>
+                        </div>
+
+                        <!-- 模型版本选择（如果有多个版本） -->
+                        <div v-if="currentModelDetails?.has_multiple_variants && currentModelDetails.variants?.length > 0"
+                            class="form-item-with-hint">
+                            <a-form-item label="模型版本">
+                                <a-radio-group v-model:value="selectedVariant" button-style="solid"
+                                    @change="() => switchModelVariant(selectedVariant)">
+                                    <a-radio-button v-for="variant in currentModelDetails.variants"
+                                        :key="variant.variant_name" :value="variant.variant_name">
+                                        {{ variant.variant_name.toUpperCase() }}
+                                        <span v-if="variant.variant_name === 'int8'"
+                                            style="font-size: 10px; opacity: 0.7;">
+                                            (快速)</span>
+                                        <span v-if="variant.variant_name === 'fp32'"
+                                            style="font-size: 10px; opacity: 0.7;">
+                                            (精确)</span>
+                                    </a-radio-button>
+                                </a-radio-group>
+                            </a-form-item>
+                            <div class="full-width-hint">
+                                <a-typography-text type="secondary" class="field-hint">
+                                    int8: 量化版本，速度快，体积小 · fp32: 完整精度版本，识别更准确但较慢
                                 </a-typography-text>
                             </div>
                         </div>

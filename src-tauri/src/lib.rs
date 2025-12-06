@@ -373,8 +373,10 @@ async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn get_style_path(app: tauri::AppHandle) -> Result<String, String> {
     let styles_dir = if cfg!(debug_assertions) {
-        // 开发环境：使用 src-tauri/styles
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("styles")
+        // 开发环境：使用 src-tauri/resources/styles
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("styles")
     } else {
         // 生产环境：使用资源目录
         app.path()
@@ -392,7 +394,9 @@ async fn get_style_path(app: tauri::AppHandle) -> Result<String, String> {
 async fn open_style_editor(app: tauri::AppHandle) -> Result<String, String> {
     // 获取样式文件路径
     let styles_dir = if cfg!(debug_assertions) {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("styles")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("styles")
     } else {
         app.path()
             .resource_dir()
@@ -454,10 +458,12 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
-            // 获取模型目录：开发时使用 src-tauri/models，生产环境使用资源目录
+            // 获取模型目录：开发时使用 src-tauri/resources/models，生产环境使用资源目录
             let models_dir = if cfg!(debug_assertions) {
-                // 开发环境：使用 src-tauri/models
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models")
+                // 开发环境：使用 src-tauri/resources/models
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("resources")
+                    .join("models")
             } else {
                 // 生产环境：使用资源目录
                 app.path()

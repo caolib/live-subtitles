@@ -53,6 +53,19 @@ fn default_num_threads() -> i32 {
     2
 }
 
+/// 模型版本信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelVariant {
+    /// 版本名称（如 "fp32", "int8"）
+    pub variant_name: String,
+    /// encoder 文件路径
+    pub encoder: String,
+    /// decoder 文件路径
+    pub decoder: String,
+    /// joiner 文件路径
+    pub joiner: String,
+}
+
 /// 扫描模型文件夹的结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScannedModelFiles {
@@ -62,16 +75,20 @@ pub struct ScannedModelFiles {
     pub model_name: String,
     /// 模型文件夹完整路径
     pub model_dir: String,
-    /// 检测到的 encoder 文件
+    /// 检测到的 encoder 文件（默认版本）
     pub encoder: Option<String>,
-    /// 检测到的 decoder 文件
+    /// 检测到的 decoder 文件（默认版本）
     pub decoder: Option<String>,
-    /// 检测到的 joiner 文件
+    /// 检测到的 joiner 文件（默认版本）
     pub joiner: Option<String>,
     /// 检测到的 tokens 文件
     pub tokens: Option<String>,
     /// 是否是完整的模型（包含所有必需文件）
     pub is_complete: bool,
+    /// 可用的模型版本列表（如果有多个版本）
+    pub variants: Vec<ModelVariant>,
+    /// 是否有多个版本
+    pub has_multiple_variants: bool,
 }
 
 impl ScannedModelFiles {
@@ -98,7 +115,14 @@ impl ScannedModelFiles {
             joiner: None,
             tokens: None,
             is_complete: false,
+            variants: Vec::new(),
+            has_multiple_variants: false,
         };
+
+        // 收集所有文件
+        let mut encoders = Vec::new();
+        let mut decoders = Vec::new();
+        let mut joiners = Vec::new();
 
         // 遍历目录中的文件
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -114,16 +138,71 @@ impl ScannedModelFiles {
                     .unwrap_or("")
                     .to_lowercase();
 
-                // 模糊匹配文件类型
+                // 收集所有模型文件
                 if file_name.contains("encoder") && file_name.ends_with(".onnx") {
-                    result.encoder = Some(path.to_string_lossy().to_string());
+                    encoders.push(path.to_string_lossy().to_string());
                 } else if file_name.contains("decoder") && file_name.ends_with(".onnx") {
-                    result.decoder = Some(path.to_string_lossy().to_string());
+                    decoders.push(path.to_string_lossy().to_string());
                 } else if file_name.contains("joiner") && file_name.ends_with(".onnx") {
-                    result.joiner = Some(path.to_string_lossy().to_string());
+                    joiners.push(path.to_string_lossy().to_string());
                 } else if file_name.contains("tokens") && file_name.ends_with(".txt") {
                     result.tokens = Some(path.to_string_lossy().to_string());
                 }
+            }
+        }
+
+        // 优先选择 int8 版本作为默认版本（更快）
+        result.encoder = encoders
+            .iter()
+            .find(|e| e.contains("int8"))
+            .or_else(|| encoders.first())
+            .cloned();
+        result.decoder = decoders
+            .iter()
+            .find(|d| d.contains("int8"))
+            .or_else(|| decoders.first())
+            .cloned();
+        result.joiner = joiners
+            .iter()
+            .find(|j| j.contains("int8"))
+            .or_else(|| joiners.first())
+            .cloned();
+
+        // 检测多版本（如果 encoder/decoder/joiner 都有多个文件）
+        if encoders.len() > 1 && decoders.len() > 1 && joiners.len() > 1 {
+            result.has_multiple_variants = true;
+
+            // 尝试匹配版本对（int8 和默认版本）
+            // 1. 先找 int8 版本
+            let int8_encoder = encoders.iter().find(|e| e.contains("int8"));
+            let int8_decoder = decoders.iter().find(|d| d.contains("int8"));
+            let int8_joiner = joiners.iter().find(|j| j.contains("int8"));
+
+            if let (Some(encoder), Some(decoder), Some(joiner)) =
+                (int8_encoder, int8_decoder, int8_joiner)
+            {
+                result.variants.push(ModelVariant {
+                    variant_name: "int8".to_string(),
+                    encoder: encoder.clone(),
+                    decoder: decoder.clone(),
+                    joiner: joiner.clone(),
+                });
+            }
+
+            // 2. 再找默认版本（不含 int8 的就是 fp32）
+            let fp32_encoder = encoders.iter().find(|e| !e.contains("int8"));
+            let fp32_decoder = decoders.iter().find(|d| !d.contains("int8"));
+            let fp32_joiner = joiners.iter().find(|j| !j.contains("int8"));
+
+            if let (Some(encoder), Some(decoder), Some(joiner)) =
+                (fp32_encoder, fp32_decoder, fp32_joiner)
+            {
+                result.variants.push(ModelVariant {
+                    variant_name: "fp32".to_string(),
+                    encoder: encoder.clone(),
+                    decoder: decoder.clone(),
+                    joiner: joiner.clone(),
+                });
             }
         }
 
