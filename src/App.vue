@@ -18,13 +18,17 @@ import {
   CommentOutlined,
   FormatPainterOutlined
 } from "@ant-design/icons-vue";
+import { storeToRefs } from "pinia";
 import { useSettingsStore } from "./stores/settings";
 
 // Pinia Store
 const settingsStore = useSettingsStore();
+// 使用 storeToRefs 确保响应式
+const { currentModelId, currentModel, availableModels } = storeToRefs(settingsStore);
 
 // 状态
 const isRunning = ref(false);
+const isModelLoading = ref(false); // 模型加载中
 const isLocked = ref(false); // 窗口锁定状态
 const subtitles = ref([]); // 已完成的字幕历史
 const currentText = ref(""); // 正在识别的文本（中间结果）
@@ -32,9 +36,12 @@ const maxSubtitles = 5; // 最多显示的字幕条数
 const errorMessage = ref("");
 const isHovering = ref(false); // 鼠标是否在窗口上
 
-// 当前模型名称 - 现在直接从 store computed，因为是同一个 Vue 实例
+// 当前模型名称 - 从 store 的 currentModel 计算得出（响应式）
 const currentModelName = computed(() => {
-  return settingsStore.currentModel?.model_name || '未配置模型';
+  const model = currentModel.value;
+  const name = model?.model_name || '未配置模型';
+  console.log('Computing model name:', name, 'from currentModelId:', currentModelId.value);
+  return name;
 });
 
 // 自定义样式
@@ -210,6 +217,8 @@ function toggleHistory() {
 let unlistenSubtitle = null;
 let unlistenError = null;
 let unlistenClose = null;
+let unlistenModelLoading = null;
+let unlistenModelSwitched = null;
 
 onMounted(async () => {
   // 加载自定义样式
@@ -271,6 +280,19 @@ onMounted(async () => {
   unlistenError = await listen("recognition_error", (event) => {
     errorMessage.value = String(event.payload);
     isRunning.value = false;
+    isModelLoading.value = false;
+  });
+
+  // 监听模型加载状态
+  unlistenModelLoading = await listen("model_loading", (event) => {
+    isModelLoading.value = event.payload.loading;
+  });
+
+  // 监听模型切换事件（从 Settings 窗口发送）
+  // 注意：实际的状态同步由 main.js 中的 storage 事件监听器处理
+  unlistenModelSwitched = await appWindow.listen('model-switched', (event) => {
+    console.log('Received model-switched event:', event.payload);
+    console.log('Current model from store:', currentModel.value?.model_name);
   });
 
   // 自动开始识别（仅在有配置的情况下）
@@ -293,6 +315,8 @@ onUnmounted(() => {
   if (unlistenSubtitle) unlistenSubtitle();
   if (unlistenError) unlistenError();
   if (unlistenClose) unlistenClose();
+  if (unlistenModelLoading) unlistenModelLoading();
+  if (unlistenModelSwitched) unlistenModelSwitched();
   // 清理样式文件监听
   if (styleWatchInterval) clearInterval(styleWatchInterval);
   // 移除自定义样式元素
@@ -401,6 +425,9 @@ const historyText = computed(() => {
       <!-- 空状态 -->
       <div class="empty-state" v-else-if="!isRunning">
         <span>点击开始按钮开始识别</span>
+      </div>
+      <div class="empty-state" v-else-if="isModelLoading">
+        <span>正在加载模型...</span>
       </div>
       <div class="empty-state" v-else>
         <span>正在聆听...</span>

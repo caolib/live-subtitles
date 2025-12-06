@@ -144,6 +144,32 @@ export const useSettingsStore = defineStore('settings', () => {
     }
 
     /**
+     * 获取当前模型（非响应式，用于手动调用）
+     */
+    function getCurrentModelSync() {
+        console.log('getCurrentModelSync called, currentModelId:', currentModelId.value);
+        console.log('Available models:', availableModels.value);
+
+        const model = availableModels.value.find(m => m.id === currentModelId.value);
+        console.log('Found model:', model);
+
+        if (!model) return null;
+
+        // 如果有高级配置覆盖，合并配置
+        const advancedConfig = modelAdvancedConfig.value[model.id];
+        if (advancedConfig) {
+            return {
+                ...model,
+                encoder: advancedConfig.encoder || model.encoder,
+                decoder: advancedConfig.decoder || model.decoder,
+                joiner: advancedConfig.joiner || model.joiner,
+                tokens: advancedConfig.tokens || model.tokens,
+            };
+        }
+        return model;
+    }
+
+    /**
      * 导出所有设置为 JSON 字符串
      */
     function exportSettings() {
@@ -229,6 +255,7 @@ export const useSettingsStore = defineStore('settings', () => {
         updateModelSettings,
         setAvailableModels,
         setModelAdvancedConfig,
+        getCurrentModelSync,
         exportSettings,
         importSettings,
         resetToDefaults,

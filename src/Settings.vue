@@ -190,10 +190,11 @@ async function syncModelToBackend() {
 
 // 监听当前模型变化，加载对应的高级配置并同步到后端
 watch(() => settingsStore.currentModelId, async (newId, oldId) => {
+    console.log('Watch triggered - currentModelId changed:', { oldId, newId });
     loadCurrentModelAdvancedConfig();
     // 只有在实际切换模型时才同步（排除初始加载）
     if (oldId && newId && oldId !== newId) {
-        const newModelName = settingsStore.currentModel?.model_name;
+        const newModelName = settingsStore.getCurrentModelSync()?.model_name;
         console.log(`Switching model from ${oldId} to ${newId} (${newModelName})`);
 
         try {
@@ -236,6 +237,7 @@ watch(() => settingsStore.currentModelId, async (newId, oldId) => {
                         await new Promise(resolve => setTimeout(resolve, 1000));
                     }
 
+                    // 通知前端开始加载模型
                     await invoke("start_recognition");
                     console.log("Recognition restarted successfully");
                 } catch (e) {
@@ -247,6 +249,14 @@ watch(() => settingsStore.currentModelId, async (newId, oldId) => {
 
             message.success(`已切换到模型: ${newModelName}`);
             console.log(`Model switched successfully to: ${newModelName}`);
+
+            // 发送模型切换事件给 App.vue
+            try {
+                await appWindow.emit('model-switched', { modelId: newId, modelName: newModelName });
+                console.log('Emitted model-switched event');
+            } catch (e) {
+                console.error('Failed to emit model-switched event:', e);
+            }
         } catch (e) {
             message.error(`模型切换失败: ${e}`);
             console.error("Failed to switch model:", e);
@@ -482,7 +492,9 @@ onMounted(() => {
                         <div class="form-item-with-hint">
                             <a-form-item label="选择模型">
                                 <a-select v-model:value="settingsStore.currentModelId" style="width: 100%"
-                                    placeholder="请先扫描模型目录" :options="settingsStore.availableModels.map(m => ({
+                                    placeholder="请先扫描模型目录"
+                                    @change="(value) => console.log('Select changed to:', value, 'Store value:', settingsStore.currentModelId)"
+                                    :options="settingsStore.availableModels.map(m => ({
                                         value: m.id,
                                         label: m.model_name + (m.is_complete ? ' ✓' : ' (不完整)')
                                     }))" />

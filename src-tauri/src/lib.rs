@@ -266,9 +266,14 @@ async fn start_recognition(
             debug: true,
         };
 
+        // 通知前端开始加载模型
+        let _ = app_handle.emit("model_loading", serde_json::json!({"loading": true}));
+
         // 创建 OnlineRecognizer
         match OnlineRecognizer::new(online_config) {
             Ok(recognizer) => {
+                // 模型加载完成
+                let _ = app_handle.emit("model_loading", serde_json::json!({"loading": false}));
                 let mut last_text = String::new();
 
                 // 循环处理音频
@@ -307,6 +312,8 @@ async fn start_recognition(
             }
             Err(e) => {
                 eprintln!("Failed to create OnlineRecognizer: {}", e);
+                // 模型加载失败，取消加载状态
+                let _ = app_handle.emit("model_loading", serde_json::json!({"loading": false}));
                 let _ = app_handle.emit("recognition_error", &e);
             }
         }
