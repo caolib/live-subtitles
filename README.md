@@ -1,5 +1,12 @@
 <h1 align='center'>Live Subtitles - 实时字幕</h1>
 
+<p align="center">
+  <img src="https://img.shields.io/github/downloads/caolib/live-subtitles/total?labelColor=grey&color=blue" alt="Downloads"/>
+  <img src="https://img.shields.io/github/v/release/caolib/live-subtitles?labelColor=grey&color=red" alt="Release"/>
+  <img src="https://img.shields.io/github/stars/caolib/live-subtitles" alt="Stars"/>
+  <img src="https://img.shields.io/github/downloads/caolib/live-subtitles/latest/total" alt="Latest Downloads"/>
+</p>
+
 一个实时字幕工具，基于 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 的 asr 模型完成实时字幕识别。
 
 [](https://github.com/user-attachments/assets/40597985-8de4-4954-9a42-c47031b5e95a)
