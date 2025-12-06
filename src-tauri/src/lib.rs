@@ -298,6 +298,72 @@ async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 获取样式文件路径
+#[tauri::command]
+async fn get_style_path(app: tauri::AppHandle) -> Result<String, String> {
+    let styles_dir = if cfg!(debug_assertions) {
+        // 开发环境：使用 src-tauri/styles
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("styles")
+    } else {
+        // 生产环境：使用资源目录
+        app.path()
+            .resource_dir()
+            .map_err(|e| e.to_string())?
+            .join("styles")
+    };
+
+    let style_path = styles_dir.join("subtitle.css");
+    Ok(style_path.to_string_lossy().to_string())
+}
+
+/// 打开样式编辑器（打开 devtools 并用默认程序打开 CSS 文件）
+#[tauri::command]
+async fn open_style_editor(app: tauri::AppHandle) -> Result<String, String> {
+    // 获取样式文件路径
+    let styles_dir = if cfg!(debug_assertions) {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("styles")
+    } else {
+        app.path()
+            .resource_dir()
+            .map_err(|e| e.to_string())?
+            .join("styles")
+    };
+
+    let style_path = styles_dir.join("subtitle.css");
+
+    // 打开主窗口的 devtools
+    if let Some(window) = app.get_webview_window("main") {
+        window.open_devtools();
+    }
+
+    // 用默认程序打开 CSS 文件
+    if style_path.exists() {
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", "start", "", &style_path.to_string_lossy()])
+                .spawn()
+                .map_err(|e| format!("无法打开文件: {}", e))?;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .arg(&style_path)
+                .spawn()
+                .map_err(|e| format!("无法打开文件: {}", e))?;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(&style_path)
+                .spawn()
+                .map_err(|e| format!("无法打开文件: {}", e))?;
+        }
+    }
+
+    Ok(style_path.to_string_lossy().to_string())
+}
+
 /// 显示主窗口
 #[tauri::command]
 async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
@@ -423,6 +489,8 @@ pub fn run() {
             stop_recognition,
             open_settings,
             show_main_window,
+            get_style_path,
+            open_style_editor,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

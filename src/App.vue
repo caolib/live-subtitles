@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { restoreStateCurrent, StateFlags } from "@tauri-apps/plugin-window-state";
+import { readTextFile } from "@tauri-apps/plugin-fs";
+import { watch } from "@tauri-apps/plugin-fs";
 import {
   CaretRightOutlined,
   PauseOutlined,
@@ -14,7 +16,8 @@ import {
   LockOutlined,
   UnlockOutlined,
   MessageOutlined,
-  CommentOutlined
+  CommentOutlined,
+  FormatPainterOutlined
 } from "@ant-design/icons-vue";
 import { useSettingsStore } from "./stores/settings";
 
@@ -28,6 +31,62 @@ const subtitles = ref([]); // 已完成的字幕历史
 const currentText = ref(""); // 正在识别的文本（中间结果）
 const maxSubtitles = 5; // 最多显示的字幕条数
 const errorMessage = ref("");
+
+// 自定义样式
+const customStyleElement = ref(null);
+const stylePath = ref("");
+let unwatchStyle = null;
+
+// 加载外部 CSS 样式
+async function loadCustomStyle() {
+  try {
+    stylePath.value = await invoke("get_style_path");
+    const cssContent = await readTextFile(stylePath.value);
+    applyCustomStyle(cssContent);
+  } catch (e) {
+    console.error("Failed to load custom style:", e);
+  }
+}
+
+// 应用自定义样式
+function applyCustomStyle(cssContent) {
+  // 移除旧的样式元素
+  if (customStyleElement.value) {
+    customStyleElement.value.remove();
+  }
+  // 创建新的样式元素
+  const style = document.createElement("style");
+  style.id = "custom-subtitle-style";
+  style.textContent = cssContent;
+  document.head.appendChild(style);
+  customStyleElement.value = style;
+}
+
+// 监听样式文件变化
+async function watchStyleFile() {
+  if (!stylePath.value) return;
+
+  try {
+    unwatchStyle = await watch(stylePath.value, async (event) => {
+      // 文件被修改时重新加载样式
+      if (event.type && (event.type.modify || event.type === "modify")) {
+        console.log("Style file changed, reloading...");
+        await loadCustomStyle();
+      }
+    }, { recursive: false });
+  } catch (e) {
+    console.error("Failed to watch style file:", e);
+  }
+}
+
+// 打开样式编辑器
+async function openStyleEditor() {
+  try {
+    await invoke("open_style_editor");
+  } catch (e) {
+    console.error("Failed to open style editor:", e);
+  }
+}
 
 // 拖动相关
 const appWindow = getCurrentWindow();
@@ -103,6 +162,10 @@ let unlistenError = null;
 let unlistenClose = null;
 
 onMounted(async () => {
+  // 加载自定义样式
+  await loadCustomStyle();
+  // 监听样式文件变化
+  await watchStyleFile();
 
   // 如果禁用了窗口状态记忆，重置窗口到默认位置
   if (!settingsStore.rememberWindowState) {
@@ -173,6 +236,12 @@ onUnmounted(() => {
   if (unlistenSubtitle) unlistenSubtitle();
   if (unlistenError) unlistenError();
   if (unlistenClose) unlistenClose();
+  // 清理样式文件监听
+  if (unwatchStyle) unwatchStyle();
+  // 移除自定义样式元素
+  if (customStyleElement.value) {
+    customStyleElement.value.remove();
+  }
 });
 
 // 最新的字幕（正在识别的文本，或最后一条已完成的）
@@ -245,6 +314,9 @@ const historyText = computed(() => {
           <button class="action-btn" @click="toggleLock" title="锁定窗口">
             <LockOutlined />
           </button>
+          <button class="action-btn" @click="openStyleEditor" title="编辑样式">
+            <FormatPainterOutlined />
+          </button>
         </div>
         <div class="top-bar-right" @mousedown.stop>
           <button class="control-btn" @click="minimizeWindow" title="最小化">
@@ -285,224 +357,6 @@ const historyText = computed(() => {
   </div>
 </template>
 
-<style>
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+<style></style>
 
-html,
-body,
-#app {
-  height: 100%;
-  overflow: hidden;
-  background: transparent;
-}
-
-body {
-  background: transparent;
-  font-family: var(--main-font-family);
-}
-</style>
-
-<style scoped>
-.app-container {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: rgba(30, 30, 30, 0.9);
-  overflow: hidden;
-  backdrop-filter: blur(10px);
-}
-
-/* 顶部控制栏（自动隐藏） */
-.top-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 10px;
-  background: rgba(0, 0, 0, 0.8);
-  user-select: none;
-  opacity: 0;
-  transform: translateY(-100%);
-  transition: opacity 0.3s ease, transform 0.3s ease;
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 100;
-  border-radius: 16px 16px 0 0;
-  cursor: move;
-}
-
-/* 锁定时不显示拖动光标 */
-.top-bar.locked {
-  cursor: default;
-  justify-content: center;
-}
-
-.app-container:hover .top-bar {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.top-bar-left {
-  display: flex;
-  gap: 6px;
-}
-
-.top-bar-center {
-  display: flex;
-  justify-content: center;
-}
-
-.unlock-btn {
-  background: rgba(64, 158, 255, 0.3) !important;
-}
-
-.unlock-btn:hover {
-  background: rgba(64, 158, 255, 0.5) !important;
-}
-
-.top-bar-right {
-  display: flex;
-  gap: 6px;
-}
-
-.control-btn {
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s;
-}
-
-.control-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-.control-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.close-btn:hover {
-  background: #e81123;
-}
-
-.action-btn {
-  padding: 4px 8px;
-  border: none;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.15);
-  color: #fff;
-  cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.action-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-.action-btn:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
-
-.action-btn.active {
-  background: #e81123;
-}
-
-.action-btn.active:hover {
-  background: #c41019;
-}
-
-/* 字幕区域 */
-.subtitle-area {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  padding: 12px 16px;
-  overflow: hidden;
-  min-height: 0;
-}
-
-/* 历史字幕可滚动 */
-.history-text {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.4);
-  line-height: 1.5;
-  margin-bottom: 8px;
-  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
-  overflow-y: auto;
-  flex-shrink: 1;
-  min-height: 0;
-  max-height: 50%;
-}
-
-/* 自定义滚动条 */
-.history-text::-webkit-scrollbar {
-  width: 6px;
-}
-
-.history-text::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.history-text::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 3px;
-}
-
-.history-text::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
-}
-
-.current-subtitle {
-  font-size: 20px;
-  color: #fff;
-  font-weight: 500;
-  line-height: 1.4;
-  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
-  animation: fadeIn 0.3s ease;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(5px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.empty-state {
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 14px;
-  text-align: center;
-  padding: 20px;
-}
-
-.error-message {
-  color: #ff6b6b;
-  font-size: 12px;
-  margin-top: 8px;
-  padding: 8px;
-  background: rgba(255, 0, 0, 0.1);
-  border-radius: 4px;
-}
-</style>
+<!-- 字幕样式从外部 CSS 文件动态加载，支持用户自定义和热更新 -->
