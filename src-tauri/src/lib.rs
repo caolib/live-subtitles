@@ -395,7 +395,8 @@ async fn open_style_editor(app: tauri::AppHandle) -> Result<String, String> {
 
     let style_path = styles_dir.join("subtitle.css");
 
-    // 打开主窗口的 devtools
+    // 打开主窗口的 devtools（仅在调试模式下）
+    #[cfg(debug_assertions)]
     if let Some(window) = app.get_webview_window("main") {
         window.open_devtools();
     }
@@ -463,10 +464,14 @@ pub fn run() {
             app.manage(state);
 
             // 创建托盘菜单
-            let show_item = MenuItem::with_id(app, "show", "显示字幕窗口", true, None::<&str>)?;
+            let show_item = MenuItem::with_id(app, "show", "显示字幕", true, None::<&str>)?;
             let settings_item = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
+            let restart_item = MenuItem::with_id(app, "restart", "重启", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
+            let menu = Menu::with_items(
+                app,
+                &[&show_item, &settings_item, &restart_item, &quit_item],
+            )?;
 
             // 创建托盘图标
             let _tray = TrayIconBuilder::new()
@@ -500,6 +505,9 @@ pub fn run() {
                             .center()
                             .build();
                         }
+                    }
+                    "restart" => {
+                        app.restart();
                     }
                     "quit" => {
                         app.exit(0);

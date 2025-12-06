@@ -285,9 +285,14 @@ async function selectModelsRootDir() {
             defaultPath: settingsStore.modelsRootDir || defaultModelsDir.value,
         });
         if (selected) {
+            const oldPath = settingsStore.modelsRootDir;
             settingsStore.modelsRootDir = selected;
             // 自动扫描模型
             await scanModelsRootDir();
+            // 如果路径发生变化，提示用户重启
+            if (oldPath && oldPath !== selected) {
+                message.warning("模型文件夹路径已修改，建议重启应用以确保正常工作", 5);
+            }
         }
     } catch (e) {
         console.error("Failed to select directory:", e);

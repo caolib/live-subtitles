@@ -18,7 +18,6 @@ import {
   CommentOutlined,
   FormatPainterOutlined
 } from "@ant-design/icons-vue";
-import { Select } from "ant-design-vue";
 import { useSettingsStore } from "./stores/settings";
 
 // Pinia Store
@@ -32,30 +31,11 @@ const currentText = ref(""); // 正在识别的文本（中间结果）
 const maxSubtitles = 5; // 最多显示的字幕条数
 const errorMessage = ref("");
 const isHovering = ref(false); // 鼠标是否在窗口上
-const isSelectOpen = ref(false); // 下拉列表是否打开
 
 // 当前模型名称 - 现在直接从 store computed，因为是同一个 Vue 实例
 const currentModelName = computed(() => {
   return settingsStore.currentModel?.model_name || '未配置模型';
 });
-
-// 可用模型列表
-const modelOptions = computed(() => {
-  return settingsStore.availableModels.map(m => ({
-    label: m.model_name + (m.is_complete ? ' ✓' : ' (不完整)'),
-    value: m.id,
-    disabled: !m.is_complete
-  }));
-});
-
-// 切换模型
-async function switchModel(modelId) {
-  if (modelId === settingsStore.currentModelId) return;
-
-  console.log(`Switching to model: ${modelId}`);
-  settingsStore.currentModelId = modelId;
-  // 模型切换逻辑已在 Settings.vue 的 watch 中处理，会自动同步
-};
 
 // 自定义样式
 const customStyleElement = ref(null);
@@ -431,17 +411,11 @@ const historyText = computed(() => {
         {{ errorMessage }}
       </div>
 
-      <!-- 模型下拉列表（右下角，悬停时显示） -->
-      <div class="model-selector" v-show="isHovering || isSelectOpen" @mousedown.stop @mouseenter="isHovering = true"
+      <!-- 模型名称显示（右下角，悬停时显示） -->
+      <div class="model-name" v-show="isHovering" @mousedown.stop @mouseenter="isHovering = true"
         @mouseleave="isHovering = false">
-        <Select v-model:value="settingsStore.currentModelId" :options="modelOptions" placeholder="选择模型" size="small"
-          @change="switchModel" @dropdownVisibleChange="isSelectOpen = $event"
-          :getPopupContainer="(trigger) => trigger.parentElement" />
+        {{ currentModelName }}
       </div>
     </div>
   </div>
 </template>
-
-<style></style>
-
-<!-- 字幕样式从外部 CSS 文件动态加载，支持用户自定义和热更新 -->
