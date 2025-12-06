@@ -1,4 +1,4 @@
-# Live Subtitles
+<h1 align='center'>Live Subtitles - 实时字幕</h1>
 
 一个实时字幕工具，基于 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 的 asr 模型完成实时字幕识别。
 
