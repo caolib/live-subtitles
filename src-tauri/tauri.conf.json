@@ -44,6 +44,11 @@
       "resources/styles/": "styles/",
       "resources/models/": "models/"
     },
+    "windows": {
+      "nsis": {
+        "installerHooks": "./installer-hooks.nsh"
+      }
+    },
     "createUpdaterArtifacts": false
   }
 }

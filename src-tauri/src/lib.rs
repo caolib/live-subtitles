@@ -406,8 +406,7 @@ async fn open_style_editor(app: tauri::AppHandle) -> Result<String, String> {
 
     let style_path = styles_dir.join("subtitle.css");
 
-    // 打开主窗口的 devtools（仅在调试模式下）
-    #[cfg(debug_assertions)]
+    // 打开主窗口的 devtools（需要在 Cargo.toml 中启用 devtools feature）
     if let Some(window) = app.get_webview_window("main") {
         window.open_devtools();
     }
