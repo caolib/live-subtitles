@@ -54,10 +54,11 @@
     },
     "windows": {
       "nsis": {
-        "installerHooks": "./installer-hooks.nsh"
+        "installerHooks": "./installer-hooks.nsh",
+        "displayLanguageSelector": true,
+        "installerIcon": "icons/icon.ico"
       }
     },
     "createUpdaterArtifacts": true
   }
 }
-
