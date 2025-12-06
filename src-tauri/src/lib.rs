@@ -456,6 +456,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // 获取模型目录：开发时使用 src-tauri/resources/models，生产环境使用资源目录
             let models_dir = if cfg!(debug_assertions) {

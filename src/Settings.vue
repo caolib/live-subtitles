@@ -18,7 +18,8 @@ import {
     ScanOutlined,
     CheckCircleOutlined,
     CloseCircleOutlined,
-    InfoCircleOutlined
+    InfoCircleOutlined,
+    SyncOutlined
 } from "@ant-design/icons-vue";
 import { useSettingsStore } from "./stores/settings";
 
@@ -100,7 +101,10 @@ const aboutVisible = ref(false);
 const appVersion = ref('加载中...');
 const hasUpdate = ref(false);
 const latestVersion = ref('');
+const updateNotes = ref('');
 const checkingUpdate = ref(false);
+const downloading = ref(false);
+const downloadProgress = ref(0);
 
 // 检查当前模型配置是否完整
 const isModelComplete = computed(() => {
@@ -410,8 +414,6 @@ async function scanModelsRootDir() {
         const completeCount = models.filter(m => m.is_complete).length;
         if (models.length === 0) {
             message.warning("未找到任何模型文件夹");
-        } else {
-            message.success(`找到 ${models.length} 个模型，其中 ${completeCount} 个完整`);
         }
     } catch (e) {
         message.error("扫描失败: " + e);
@@ -529,38 +531,109 @@ async function fetchAppVersion() {
     }
 }
 
-// 检查更新
+// 检查更新（使用 Tauri updater 插件）
+// 构建代理配置
+function buildProxyConfig() {
+    const config = {
+        timeout: 60000 // 60秒超时，适应代理环境
+    };
+
+    // 如果启用了自定义代理
+    if (settingsStore.useCustomProxy && settingsStore.proxyUrl) {
+        config.proxy = {
+            all: {
+                url: settingsStore.proxyUrl
+            }
+        };
+
+        // 如果配置了用户名和密码
+        if (settingsStore.proxyUsername && settingsStore.proxyPassword) {
+            config.proxy.all.basicAuth = {
+                username: settingsStore.proxyUsername,
+                password: settingsStore.proxyPassword
+            };
+        }
+    }
+    // 否则使用系统代理（默认行为）
+
+    return config;
+}
+
 async function checkForUpdates() {
     checkingUpdate.value = true;
     hasUpdate.value = false;
+    latestVersion.value = '';
+    updateNotes.value = '';
 
     try {
-        const response = await fetch('https://api.github.com/repos/caolib/live-subtitles/tags');
-        if (!response.ok) {
-            throw new Error('Failed to fetch tags');
-        }
+        const { check } = await import('@tauri-apps/plugin-updater');
+        const config = buildProxyConfig();
+        const update = await check(config);
 
-        const tags = await response.json();
-        if (tags && tags.length > 0) {
-            // 获取最新的 tag
-            latestVersion.value = tags[0].name.replace(/^v/, ''); // 移除 'v' 前缀
-
-            // 比较版本
-            const current = appVersion.value;
-            const latest = latestVersion.value;
-
-            if (current !== latest && compareVersions(latest, current) > 0) {
-                hasUpdate.value = true;
-                message.info(`发现新版本: ${latest}`);
+        if (update) {
+            hasUpdate.value = update.available;
+            if (update.available) {
+                latestVersion.value = update.version;
+                updateNotes.value = update.body || '';
+                message.success(`发现新版本: ${update.version}`);
             } else {
                 message.success('已是最新版本');
             }
         }
     } catch (e) {
         console.error('Failed to check for updates:', e);
-        message.error('检查更新失败');
+        message.error('检查更新失败: ' + e.message);
     } finally {
         checkingUpdate.value = false;
+    }
+}
+
+// 下载并安装更新
+async function downloadAndInstallUpdate() {
+    downloading.value = true;
+    downloadProgress.value = 0;
+
+    try {
+        const { check } = await import('@tauri-apps/plugin-updater');
+        const { relaunch } = await import('@tauri-apps/plugin-process');
+
+        const config = buildProxyConfig();
+        const update = await check(config);
+
+        if (update?.available) {
+            message.loading('正在下载更新...', 0);
+
+            // 监听下载进度
+            await update.downloadAndInstall((event) => {
+                switch (event.event) {
+                    case 'Started':
+                        downloadProgress.value = 0;
+                        break;
+                    case 'Progress':
+                        downloadProgress.value = Math.floor((event.data.downloaded / event.data.contentLength) * 100);
+                        break;
+                    case 'Finished':
+                        downloadProgress.value = 100;
+                        break;
+                }
+            });
+
+            message.destroy();
+            message.success('更新下载完成，即将重启应用...');
+
+            // 延迟 1 秒后重启
+            setTimeout(async () => {
+                await relaunch();
+            }, 1000);
+        } else {
+            message.info('没有可用更新');
+        }
+    } catch (e) {
+        console.error('Failed to download update:', e);
+        message.error('更新失败: ' + e.message);
+    } finally {
+        downloading.value = false;
+        downloadProgress.value = 0;
     }
 }
 
@@ -581,10 +654,10 @@ function compareVersions(a, b) {
 }
 
 // 显示关于对话框
-function showAbout() {
+async function showAbout() {
     aboutVisible.value = true;
     // 自动检查更新
-    checkForUpdates();
+    await checkForUpdates();
 }
 
 // 处理窗口状态记忆开关变化
@@ -868,6 +941,56 @@ onMounted(async () => {
                     </a-form>
                 </a-card>
 
+                <a-card title="网络设置" class="section-card">
+                    <template #extra>
+                        <a-typography-text type="secondary">配置网络代理选项</a-typography-text>
+                    </template>
+
+                    <a-form layout="horizontal" class="aligned-form">
+                        <div class="form-item-with-hint">
+                            <a-form-item label="使用自定义代理">
+                                <a-switch v-model:checked="settingsStore.useCustomProxy" />
+                            </a-form-item>
+                            <div class="full-width-hint">
+                                <a-typography-text type="secondary" class="field-hint">
+                                    启用后将使用自定义代理地址进行网络请求（检查更新、下载安装包等）
+                                </a-typography-text>
+                            </div>
+                        </div>
+
+                        <a-form-item label="代理地址" v-if="settingsStore.useCustomProxy">
+                            <a-input v-model:value="settingsStore.proxyUrl"
+                                placeholder="例如: http://proxy.example.com:8080" style="width: 100%" />
+                        </a-form-item>
+
+                        <div v-if="settingsStore.useCustomProxy">
+                            <a-divider orientation="left">
+                                <span style="font-size: 13px; color: rgba(0, 0, 0, 0.45);">代理认证（可选）</span>
+                            </a-divider>
+
+                            <a-form-item label="用户名">
+                                <a-input v-model:value="settingsStore.proxyUsername" placeholder="代理服务器用户名（如需认证）"
+                                    style="width: 100%" />
+                            </a-form-item>
+
+                            <a-form-item label="密码">
+                                <a-input-password v-model:value="settingsStore.proxyPassword"
+                                    placeholder="代理服务器密码（如需认证）" style="width: 100%" />
+                            </a-form-item>
+
+                            <a-alert message="提示" type="info" show-icon style="margin-top: 8px;">
+                                <template #description>
+                                    <div style="font-size: 12px;">
+                                        • 如果未启用自定义代理，将使用系统代理设置<br>
+                                        • 代理地址格式: http://host:port 或 https://host:port<br>
+                                        • 仅在代理服务器需要认证时填写用户名和密码
+                                    </div>
+                                </template>
+                            </a-alert>
+                        </div>
+                    </a-form>
+                </a-card>
+
                 <a-card title="外观设置" class="section-card">
                     <template #extra>
                         <a-typography-text type="secondary">配置应用外观主题</a-typography-text>
@@ -935,7 +1058,7 @@ onMounted(async () => {
         </div>
 
         <!-- 关于对话框 -->
-        <a-modal v-model:open="aboutVisible" title="Live Subtitles" :width="800" :footer="null">
+        <a-modal v-model:open="aboutVisible" title="Live Subtitles" :width="800">
             <a-descriptions :column="1" bordered size="small">
                 <a-descriptions-item label="当前版本">
                     <a-space>
@@ -962,6 +1085,19 @@ onMounted(async () => {
                 <a-descriptions-item label="许可证">MIT License</a-descriptions-item>
             </a-descriptions>
 
+            <!-- 更新通知 -->
+            <a-alert v-if="hasUpdate && updateNotes" type="info" style="margin-top: 16px;" show-icon>
+                <template #message>
+                    <div style="font-weight: 500;">新版本更新内容</div>
+                </template>
+                <template #description>
+                    <div style="white-space: pre-wrap; max-height: 200px; overflow-y: auto;">{{ updateNotes }}</div>
+                </template>
+            </a-alert>
+
+            <!-- 下载进度 -->
+            <a-progress v-if="downloading" :percent="downloadProgress" status="active" style="margin-top: 16px;" />
+
             <a-divider />
 
             <div>
@@ -981,6 +1117,24 @@ onMounted(async () => {
                     </div>
                 </a-space>
             </div>
+
+            <template #footer>
+                <a-space>
+                    <a-button v-if="hasUpdate" type="primary" :loading="downloading" @click="downloadAndInstallUpdate">
+                        <template #icon>
+                            <DownloadOutlined />
+                        </template>
+                        立即更新
+                    </a-button>
+                    <a-button :loading="checkingUpdate" @click="checkForUpdates">
+                        <template #icon>
+                            <SyncOutlined />
+                        </template>
+                        检查更新
+                    </a-button>
+                    <a-button @click="aboutVisible = false">关闭</a-button>
+                </a-space>
+            </template>
         </a-modal>
     </a-config-provider>
 </template>

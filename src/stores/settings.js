@@ -17,6 +17,12 @@ export const useSettingsStore = defineStore('settings', () => {
     // ========== 窗口设置 ==========
     const rememberWindowState = ref(true) // 记住窗口位置和大小
 
+    // ========== 网络设置 ==========
+    const useCustomProxy = ref(false) // 是否使用自定义代理
+    const proxyUrl = ref('') // 代理地址，例如: http://proxy.example.com:8080
+    const proxyUsername = ref('') // 代理用户名（可选）
+    const proxyPassword = ref('') // 代理密码（可选）
+
     // ========== 模型设置 ==========
     const modelsRootDir = ref('') // 模型根目录
     const currentModelId = ref('') // 当前选中的模型 ID（目录名）
@@ -61,6 +67,12 @@ export const useSettingsStore = defineStore('settings', () => {
         window: {
             rememberWindowState: rememberWindowState.value,
         },
+        network: {
+            useCustomProxy: useCustomProxy.value,
+            proxyUrl: proxyUrl.value,
+            proxyUsername: proxyUsername.value,
+            proxyPassword: proxyPassword.value,
+        },
         model: {
             modelsRootDir: modelsRootDir.value,
             currentModelId: currentModelId.value,
@@ -97,6 +109,24 @@ export const useSettingsStore = defineStore('settings', () => {
     function updateWindowSettings(settings) {
         if (settings.rememberWindowState !== undefined) {
             rememberWindowState.value = settings.rememberWindowState
+        }
+    }
+
+    /**
+     * 更新网络设置
+     */
+    function updateNetworkSettings(settings) {
+        if (settings.useCustomProxy !== undefined) {
+            useCustomProxy.value = settings.useCustomProxy
+        }
+        if (settings.proxyUrl !== undefined) {
+            proxyUrl.value = settings.proxyUrl
+        }
+        if (settings.proxyUsername !== undefined) {
+            proxyUsername.value = settings.proxyUsername
+        }
+        if (settings.proxyPassword !== undefined) {
+            proxyPassword.value = settings.proxyPassword
         }
     }
 
@@ -208,6 +238,11 @@ export const useSettingsStore = defineStore('settings', () => {
                 updateWindowSettings(data.settings.window)
             }
 
+            // 导入网络设置
+            if (data.settings.network) {
+                updateNetworkSettings(data.settings.network)
+            }
+
             // 导入模型设置
             if (data.settings.model) {
                 updateModelSettings(data.settings.model)
@@ -227,6 +262,10 @@ export const useSettingsStore = defineStore('settings', () => {
         maxHistoryLength.value = 0
         themeMode.value = 'system'
         rememberWindowState.value = true
+        useCustomProxy.value = false
+        proxyUrl.value = ''
+        proxyUsername.value = ''
+        proxyPassword.value = ''
         modelsRootDir.value = ''
         currentModelId.value = ''
         availableModels.value = []
@@ -239,6 +278,10 @@ export const useSettingsStore = defineStore('settings', () => {
         maxHistoryLength,
         themeMode,
         rememberWindowState,
+        useCustomProxy,
+        proxyUrl,
+        proxyUsername,
+        proxyPassword,
         modelsRootDir,
         currentModelId,
         availableModels,
@@ -252,6 +295,7 @@ export const useSettingsStore = defineStore('settings', () => {
         updateDisplaySettings,
         updateAppearanceSettings,
         updateWindowSettings,
+        updateNetworkSettings,
         updateModelSettings,
         setAvailableModels,
         setModelAdvancedConfig,

@@ -24,3 +24,7 @@ dist-ssr
 *.sw?
 
 **/models/
+
+# Tauri signing keys
+*.key
+.tauri/
