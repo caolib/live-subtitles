@@ -98,6 +98,15 @@ const selectedVariant = ref("int8");
 
 // 关于对话框显示状态
 const aboutVisible = ref(false);
+
+// 音频设备加载状态
+const loadingAudioDevices = ref(false);
+
+// 音频源类型选项
+const audioSourceTypeOptions = [
+    { label: "系统音频", value: "systemaudio" },
+    { label: "麦克风输入", value: "microphone" },
+];
 const appVersion = ref('加载中...');
 const hasUpdate = ref(false);
 const latestVersion = ref('');
@@ -270,6 +279,9 @@ async function syncModelToBackend() {
                 sample_rate: 16000,
                 num_threads: 2,
             }],
+            // 同步音频源配置
+            audio_source_type: settingsStore.audioSourceType,
+            audio_device_id: currentAudioDeviceId.value || "",
         };
         await invoke("update_config", { config: updatedConfig });
         console.log("Model synced to backend:", currentModel.model_name);
@@ -452,8 +464,16 @@ async function saveConfig() {
             throw new Error("请先选择一个模型");
         }
 
-        // 同步到后端
+        // 同步到后端（包括音频配置）
         await syncModelToBackend();
+        
+        // 调试：输出当前音频配置
+        console.log('[Audio] Saved audio config:', {
+            audioSourceType: settingsStore.audioSourceType,
+            audioDeviceIdForSystem: settingsStore.audioDeviceIdForSystem,
+            audioDeviceIdForMicrophone: settingsStore.audioDeviceIdForMicrophone,
+            currentDeviceId: currentAudioDeviceId.value
+        });
 
         message.success("保存成功！");
     } catch (e) {
@@ -673,9 +693,166 @@ async function handleWindowStateChange(checked) {
     // 禁用时不需要特别处理，只是下次启动不会恢复
 }
 
+// 枚举音频设备
+async function enumerateAudioDevices() {
+    loadingAudioDevices.value = true;
+    try {
+        const devices = await invoke("enumerate_audio_devices");
+        settingsStore.setAvailableAudioDevices(devices);
+        message.success(`已检测到 ${devices.length} 个音频设备`);
+    } catch (e) {
+        message.error(`枚举音频设备失败: ${e}`);
+        console.error("Failed to enumerate audio devices:", e);
+    } finally {
+        loadingAudioDevices.value = false;
+    }
+}
+
+// 计算当前音频源类型对应的设备ID (支持双向绑定)
+const currentAudioDeviceId = computed({
+    get() {
+        if (settingsStore.audioSourceType === 'systemaudio') {
+            return settingsStore.audioDeviceIdForSystem;
+        } else {
+            return settingsStore.audioDeviceIdForMicrophone;
+        }
+    },
+    set(value) {
+        if (settingsStore.audioSourceType === 'systemaudio') {
+            settingsStore.audioDeviceIdForSystem = value;
+        } else {
+            settingsStore.audioDeviceIdForMicrophone = value;
+        }
+    }
+});
+
+// 计算过滤后的音频设备（根据音频源类型）
+const filteredAudioDevices = computed(() => {
+    const sourceType = settingsStore.audioSourceType;
+    return settingsStore.availableAudioDevices.filter(device => {
+        if (sourceType === 'systemaudio') {
+            return device.device_type === 'output';
+        } else if (sourceType === 'microphone') {
+            return device.device_type === 'input';
+        }
+        return true;
+    });
+});
+
+// 音频源类型变化时，自动切换到对应的设备ID并同步到后端
+watch(() => settingsStore.audioSourceType, async (newType, oldType) => {
+    console.log('[Audio] Audio source type changed to:', newType);
+    console.log('[Audio] Switched to device ID:', currentAudioDeviceId.value);
+    
+    // 只有在实际切换时才同步（排除初始加载）
+    if (oldType !== undefined && newType !== oldType) {
+        // 检查识别是否正在运行
+        let wasRunning = false;
+        try {
+            wasRunning = await invoke("is_recognition_running");
+        } catch (e) {
+            console.warn("Failed to check recognition status:", e);
+        }
+        
+        // 如果正在运行，先停止
+        if (wasRunning) {
+            try {
+                await invoke("stop_recognition");
+                await new Promise(resolve => setTimeout(resolve, 500));
+            } catch (e) {
+                console.error("Failed to stop recognition:", e);
+            }
+        }
+        
+        // 同步音频配置到后端
+        await syncModelToBackend();
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // 如果之前在运行，重新启动
+        if (wasRunning) {
+            try {
+                await invoke("start_recognition");
+                message.success(`已切换到${newType === 'systemaudio' ? '系统音频' : '麦克风'}模式并重启识别`);
+            } catch (e) {
+                console.error("Failed to restart recognition:", e);
+                message.warning(`已切换到${newType === 'systemaudio' ? '系统音频' : '麦克风'}模式，但重启失败: ${e}。请手动点击开始按钮。`);
+            }
+        } else {
+            message.success(`已切换到${newType === 'systemaudio' ? '系统音频' : '麦克风'}模式`);
+        }
+    }
+});
+
+// 监听设备ID变化，自动同步到后端
+watch(() => currentAudioDeviceId.value, async (newDeviceId, oldDeviceId) => {
+    // 只有在设备ID实际发生变化时才同步（排除初始加载和undefined）
+    if (oldDeviceId !== undefined && newDeviceId !== oldDeviceId) {
+        console.log('[Audio] Device ID changed from', oldDeviceId, 'to', newDeviceId);
+        
+        // 检查识别是否正在运行
+        let wasRunning = false;
+        try {
+            wasRunning = await invoke("is_recognition_running");
+        } catch (e) {
+            console.warn("Failed to check recognition status:", e);
+        }
+        
+        // 如果正在运行，先停止
+        if (wasRunning) {
+            try {
+                await invoke("stop_recognition");
+                await new Promise(resolve => setTimeout(resolve, 500));
+            } catch (e) {
+                console.error("Failed to stop recognition:", e);
+            }
+        }
+        
+        // 同步配置
+        await syncModelToBackend();
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        const deviceName = filteredAudioDevices.value.find(d => d.id === newDeviceId)?.name || '默认设备';
+        
+        // 如果之前在运行，重新启动
+        if (wasRunning) {
+            try {
+                await invoke("start_recognition");
+                message.success(`已切换到设备: ${deviceName}，识别已重启`);
+            } catch (e) {
+                console.error("Failed to restart recognition:", e);
+                message.warning(`已切换到设备: ${deviceName}，但重启失败: ${e}。请手动点击开始按钮。`);
+            }
+        } else {
+            message.success(`已切换到设备: ${deviceName}`);
+        }
+    }
+});
+
 onMounted(async () => {
     loadConfig();
     await fetchAppVersion();
+    
+    // 调试：显示从 localStorage 加载的音频配置
+    console.log('[Audio] Loaded audio config from store:', {
+        audioSourceType: settingsStore.audioSourceType,
+        audioDeviceIdForSystem: settingsStore.audioDeviceIdForSystem,
+        audioDeviceIdForMicrophone: settingsStore.audioDeviceIdForMicrophone
+    });
+    
+    // 自动枚举音频设备
+    await enumerateAudioDevices();
+    
+    // 枚举后再次检查当前设备ID是否有效
+    if (currentAudioDeviceId.value) {
+        const deviceExists = filteredAudioDevices.value.some(d => d.id === currentAudioDeviceId.value);
+        console.log('[Audio] Device exists in filtered list:', deviceExists);
+        
+        if (!deviceExists) {
+            console.warn('[Audio] Saved device not found, clearing selection');
+            message.warning('之前保存的音频设备未找到，已重置为默认设备');
+            currentAudioDeviceId.value = '';
+        }
+    }
 });
 </script>
 
@@ -941,6 +1118,70 @@ onMounted(async () => {
                     </a-form>
                 </a-card>
 
+                <a-card title="音频配置" class="section-card">
+                    <template #extra>
+                        <a-typography-text type="secondary">配置音频输入源</a-typography-text>
+                    </template>
+
+                    <a-form layout="horizontal" class="aligned-form">
+                        <!-- 音频源类型 -->
+                        <div class="form-item-with-hint">
+                            <a-form-item label="音频源类型">
+                                <a-radio-group v-model:value="settingsStore.audioSourceType" 
+                                    :options="audioSourceTypeOptions"
+                                    option-type="button" button-style="solid" />
+                            </a-form-item>
+                            <div class="full-width-hint">
+                                <a-typography-text type="secondary" class="field-hint">
+                                    选择系统音频可识别电脑播放的声音，选择麦克风输入可识别语音
+                                </a-typography-text>
+                            </div>
+                        </div>
+
+                        <!-- 音频设备选择 -->
+                        <div class="form-item-with-hint">
+                            <a-form-item label="音频设备">
+                                <a-input-group compact class="full-width-input-group">
+                                    <a-select v-model:value="currentAudioDeviceId" 
+                                        style="width: calc(100% - 40px)"
+                                        placeholder="选择音频设备（留空使用默认设备）"
+                                        allow-clear
+                                        show-search
+                                        @change="(value) => console.log('[Audio] Device selection changed to:', value)"
+                                        :filter-option="(input, option) => {
+                                            return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0;
+                                        }">
+                                        <a-select-option v-for="device in filteredAudioDevices" 
+                                            :key="device.id" 
+                                            :value="device.id"
+                                            :label="device.name">
+                                            <span>
+                                                <CheckCircleOutlined v-if="device.is_default" 
+                                                    style="color: #52c41a; margin-right: 4px;" />
+                                                {{ device.name }}
+                                            </span>
+                                        </a-select-option>
+                                    </a-select>
+                                    <a-button @click="enumerateAudioDevices" 
+                                        :loading="loadingAudioDevices" 
+                                        title="刷新设备列表">
+                                        <template #icon>
+                                            <ReloadOutlined />
+                                        </template>
+                                    </a-button>
+                                </a-input-group>
+                            </a-form-item>
+                            <div class="full-width-hint">
+                                <a-typography-text type="secondary" class="field-hint">
+                                    已检测到 {{ filteredAudioDevices.length }} 个{{ settingsStore.audioSourceType === 'systemaudio' ? '系统音频' : '麦克风' }}设备
+                                    <CheckCircleOutlined style="color: #52c41a; margin: 0 4px;" />
+                                    标记表示默认设备
+                                </a-typography-text>
+                            </div>
+                        </div>
+                    </a-form>
+                </a-card>
+
                 <a-card title="网络设置" class="section-card">
                     <template #extra>
                         <a-typography-text type="secondary">配置网络代理选项</a-typography-text>
@@ -977,16 +1218,6 @@ onMounted(async () => {
                                 <a-input-password v-model:value="settingsStore.proxyPassword"
                                     placeholder="代理服务器密码（如需认证）" style="width: 100%" />
                             </a-form-item>
-
-                            <a-alert message="提示" type="info" show-icon style="margin-top: 8px;">
-                                <template #description>
-                                    <div style="font-size: 12px;">
-                                        • 如果未启用自定义代理，将使用系统代理设置<br>
-                                        • 代理地址格式: http://host:port 或 https://host:port<br>
-                                        • 仅在代理服务器需要认证时填写用户名和密码
-                                    </div>
-                                </template>
-                            </a-alert>
                         </div>
                     </a-form>
                 </a-card>

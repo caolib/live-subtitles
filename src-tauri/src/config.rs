@@ -216,6 +216,22 @@ impl ScannedModelFiles {
     }
 }
 
+/// 音频源类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioSourceType {
+    /// 系统音频 (loopback)
+    SystemAudio,
+    /// 麦克风输入
+    Microphone,
+}
+
+impl Default for AudioSourceType {
+    fn default() -> Self {
+        AudioSourceType::SystemAudio
+    }
+}
+
 /// 应用配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -223,6 +239,12 @@ pub struct AppConfig {
     pub current_model_id: String,
     /// 可用的 ASR 模型列表
     pub models: Vec<AsrModelConfig>,
+    /// 音频源类型
+    #[serde(default)]
+    pub audio_source_type: AudioSourceType,
+    /// 音频设备 ID（空字符串表示使用默认设备）
+    #[serde(default)]
+    pub audio_device_id: String,
 }
 
 impl Default for AppConfig {
@@ -243,6 +265,8 @@ impl Default for AppConfig {
                 sample_rate: 16000,
                 num_threads: 2,
             }],
+            audio_source_type: AudioSourceType::default(),
+            audio_device_id: String::new(), // 空字符串表示使用默认设备
         }
     }
 }

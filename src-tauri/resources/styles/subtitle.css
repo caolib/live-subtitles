@@ -293,8 +293,8 @@ span.ant-select-selection-item {
    ============================================ */
 .model-name {
     position: absolute;
-    bottom: 8px;
-    right: 8px;
+    bottom: 0;
+    right: 0;
     font-size: 12px;
     color: rgba(255, 255, 255, 0.5);
     padding: 4px 8px;

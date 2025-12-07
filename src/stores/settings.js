@@ -23,6 +23,13 @@ export const useSettingsStore = defineStore('settings', () => {
     const proxyUsername = ref('') // 代理用户名（可选）
     const proxyPassword = ref('') // 代理密码（可选）
 
+    // ========== 音频设置 ==========
+    const audioSourceType = ref('systemaudio') // 音频源类型: 'systemaudio' 或 'microphone'
+    const audioDeviceId = ref('') // 已废弃，保留用于兼容
+    const audioDeviceIdForSystem = ref('') // 系统音频设备ID
+    const audioDeviceIdForMicrophone = ref('') // 麦克风设备ID
+    const availableAudioDevices = ref([]) // 可用的音频设备列表
+
     // ========== 模型设置 ==========
     const modelsRootDir = ref('') // 模型根目录
     const currentModelId = ref('') // 当前选中的模型 ID（目录名）
@@ -72,6 +79,10 @@ export const useSettingsStore = defineStore('settings', () => {
             proxyUrl: proxyUrl.value,
             proxyUsername: proxyUsername.value,
             proxyPassword: proxyPassword.value,
+        },
+        audio: {
+            audioSourceType: audioSourceType.value,
+            audioDeviceId: audioDeviceId.value,
         },
         model: {
             modelsRootDir: modelsRootDir.value,
@@ -128,6 +139,25 @@ export const useSettingsStore = defineStore('settings', () => {
         if (settings.proxyPassword !== undefined) {
             proxyPassword.value = settings.proxyPassword
         }
+    }
+
+    /**
+     * 更新音频设置
+     */
+    function updateAudioSettings(settings) {
+        if (settings.audioSourceType !== undefined) {
+            audioSourceType.value = settings.audioSourceType
+        }
+        if (settings.audioDeviceId !== undefined) {
+            audioDeviceId.value = settings.audioDeviceId
+        }
+    }
+
+    /**
+     * 设置可用音频设备列表
+     */
+    function setAvailableAudioDevices(devices) {
+        availableAudioDevices.value = devices
     }
 
     /**
@@ -243,6 +273,11 @@ export const useSettingsStore = defineStore('settings', () => {
                 updateNetworkSettings(data.settings.network)
             }
 
+            // 导入音频设置
+            if (data.settings.audio) {
+                updateAudioSettings(data.settings.audio)
+            }
+
             // 导入模型设置
             if (data.settings.model) {
                 updateModelSettings(data.settings.model)
@@ -266,6 +301,11 @@ export const useSettingsStore = defineStore('settings', () => {
         proxyUrl.value = ''
         proxyUsername.value = ''
         proxyPassword.value = ''
+        audioSourceType.value = 'systemaudio'
+        audioDeviceId.value = ''
+        audioDeviceIdForSystem.value = ''
+        audioDeviceIdForMicrophone.value = ''
+        availableAudioDevices.value = []
         modelsRootDir.value = ''
         currentModelId.value = ''
         availableModels.value = []
@@ -282,6 +322,11 @@ export const useSettingsStore = defineStore('settings', () => {
         proxyUrl,
         proxyUsername,
         proxyPassword,
+        audioSourceType,
+        audioDeviceId,
+        audioDeviceIdForSystem,
+        audioDeviceIdForMicrophone,
+        availableAudioDevices,
         modelsRootDir,
         currentModelId,
         availableModels,
@@ -296,8 +341,10 @@ export const useSettingsStore = defineStore('settings', () => {
         updateAppearanceSettings,
         updateWindowSettings,
         updateNetworkSettings,
+        updateAudioSettings,
         updateModelSettings,
         setAvailableModels,
+        setAvailableAudioDevices,
         setModelAdvancedConfig,
         getCurrentModelSync,
         exportSettings,
@@ -315,6 +362,14 @@ export const useSettingsStore = defineStore('settings', () => {
             'maxHistoryLength',
             'themeMode',
             'rememberWindowState',
+            'useCustomProxy',
+            'proxyUrl',
+            'proxyUsername',
+            'proxyPassword',
+            'audioSourceType',
+            'audioDeviceId',
+            'audioDeviceIdForSystem',
+            'audioDeviceIdForMicrophone',
             'modelsRootDir',
             'currentModelId',
             'availableModels',

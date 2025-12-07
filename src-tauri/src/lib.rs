@@ -14,6 +14,7 @@ use audio::AudioCapture;
 use audio_wasapi::AudioCapture;
 use config::AppConfig;
 use config::ScannedModelFiles;
+use cpal::traits::{DeviceTrait, HostTrait};
 use online_asr::{OnlineRecognizer, OnlineRecognizerConfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -48,6 +49,19 @@ impl AppState {
     }
 }
 
+/// 音频设备信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioDeviceInfo {
+    /// 设备 ID (唯一标识)
+    pub id: String,
+    /// 设备名称
+    pub name: String,
+    /// 设备类型: "input" 或 "output"
+    pub device_type: String,
+    /// 是否是默认设备
+    pub is_default: bool,
+}
+
 /// 发送给前端的字幕事件
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubtitleEvent {
@@ -70,6 +84,60 @@ impl SubtitleEvent {
                 .as_millis() as u64,
         }
     }
+}
+
+/// 枚举所有可用的音频设备
+#[tauri::command]
+async fn enumerate_audio_devices() -> Result<Vec<AudioDeviceInfo>, String> {
+    let host = cpal::default_host();
+    let mut devices = Vec::new();
+
+    // 获取默认输入和输出设备的名称
+    let default_input_name = host.default_input_device().and_then(|d| d.name().ok());
+
+    let default_output_name = host.default_output_device().and_then(|d| d.name().ok());
+
+    // 枚举所有设备
+    let all_devices = host
+        .devices()
+        .map_err(|e| format!("Failed to enumerate devices: {}", e))?;
+
+    for (index, device) in all_devices.enumerate() {
+        let device_name = device
+            .name()
+            .unwrap_or_else(|_| "Unknown Device".to_string());
+
+        // 使用索引+名称作为设备 ID
+        let device_id = format!("{}:{}", index, device_name);
+
+        // 检查设备支持的类型
+        let supports_input = device.supports_input();
+        let supports_output = device.supports_output();
+
+        // 添加为输入设备（麦克风）
+        if supports_input {
+            let is_default = default_input_name.as_ref() == Some(&device_name);
+            devices.push(AudioDeviceInfo {
+                id: format!("input:{}", device_id),
+                name: format!("{} (麦克风)", device_name),
+                device_type: "input".to_string(),
+                is_default,
+            });
+        }
+
+        // 添加为输出设备（用于 loopback，捕获系统音频）
+        if supports_output {
+            let is_default = default_output_name.as_ref() == Some(&device_name);
+            devices.push(AudioDeviceInfo {
+                id: format!("output:{}", device_id),
+                name: format!("{} (系统音频)", device_name),
+                device_type: "output".to_string(),
+                is_default,
+            });
+        }
+    }
+
+    Ok(devices)
 }
 
 /// 获取可用的模型列表
@@ -203,10 +271,38 @@ async fn start_recognition(
         }
     }
     println!("  Tokens: {}", asr_config.tokens);
+    println!("Audio Source:");
+    println!("  Type: {:?}", config.audio_source_type);
+    if config.audio_device_id.is_empty() {
+        println!("  Device: Default");
+    } else {
+        println!("  Device ID: {}", config.audio_device_id);
+    }
     println!("========================================");
 
-    // 创建音频捕获
+    // 创建音频捕获（根据配置选择捕获模式）
+    #[cfg(target_os = "windows")]
+    use audio_wasapi::CaptureMode;
+
+    #[cfg(target_os = "windows")]
+    let capture_mode = match config.audio_source_type {
+        config::AudioSourceType::SystemAudio => CaptureMode::SystemAudio,
+        config::AudioSourceType::Microphone => CaptureMode::Microphone,
+    };
+
+    let device_id = if config.audio_device_id.is_empty() {
+        None
+    } else {
+        Some(config.audio_device_id.clone())
+    };
+
+    #[cfg(target_os = "windows")]
+    let mut audio_capture =
+        AudioCapture::new_with_device(asr_config.sample_rate, capture_mode, device_id);
+
+    #[cfg(not(target_os = "windows"))]
     let mut audio_capture = AudioCapture::new(asr_config.sample_rate);
+
     let audio_rx = audio_capture
         .start()
         .map_err(|e| format!("Failed to start audio capture: {}", e))?;
@@ -263,7 +359,7 @@ async fn start_recognition(
             rule2_min_trailing_silence: 1.2,  // 中间停顿静音
             rule3_min_utterance_length: 20.0, // 最小语句长度
             decoding_method: "greedy_search".to_string(),
-            debug: true,
+            debug: false, // 关闭 debug 模式减少日志输出
         };
 
         // 通知前端开始加载模型
@@ -564,6 +660,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            enumerate_audio_devices,
             get_available_models,
             get_models_dir,
             get_config,

@@ -120,6 +120,11 @@ async function syncModelConfigToBackend() {
   }
 
   try {
+    // 获取当前音频源对应的设备ID
+    const currentDeviceId = settingsStore.audioSourceType === 'systemaudio' 
+      ? settingsStore.audioDeviceIdForSystem 
+      : settingsStore.audioDeviceIdForMicrophone;
+
     const config = {
       current_model_id: currentModel.id,
       models: [{
@@ -137,9 +142,13 @@ async function syncModelConfigToBackend() {
         sample_rate: 16000,
         num_threads: 2,
       }],
+      // 同步音频源配置
+      audio_source_type: settingsStore.audioSourceType,
+      audio_device_id: currentDeviceId || "",
     };
     await invoke("update_config", { config });
     console.log("Model config synced to backend:", currentModel.model_name);
+    console.log("Audio source synced:", settingsStore.audioSourceType, "Device:", currentDeviceId || "Default");
   } catch (e) {
     console.error("Failed to sync model config:", e);
   }
