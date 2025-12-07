@@ -4,25 +4,27 @@
 
 <h1 align='center'>Live Subtitles - 实时字幕</h1>
 
-<!-- Keep these links. Translations will automatically update with the README. -->
-简体中文 |
-[English](https://zdoc.app/en/caolib/live-subtitles) | 
-[Deutsch](https://zdoc.app/de/caolib/live-subtitles) | 
-[Español](https://zdoc.app/es/caolib/live-subtitles) | 
-[français](https://zdoc.app/fr/caolib/live-subtitles) | 
-[日本語](https://zdoc.app/ja/caolib/live-subtitles) | 
-[한국어](https://zdoc.app/ko/caolib/live-subtitles) | 
-[Português](https://zdoc.app/pt/caolib/live-subtitles) | 
-[Русский](https://zdoc.app/ru/caolib/live-subtitles)
-
 <p align="center">
   <img src="https://img.shields.io/github/downloads/caolib/live-subtitles/total?labelColor=grey&color=blue" alt="Downloads"/>
   <img src="https://img.shields.io/github/v/release/caolib/live-subtitles?labelColor=grey&color=red" alt="Release"/>
   <img src="https://img.shields.io/github/stars/caolib/live-subtitles" alt="Stars"/>
   <img src="https://img.shields.io/github/downloads/caolib/live-subtitles/latest/total" alt="Latest Downloads"/>
-  <img src="https://img.shields.io/github/license/caolib/live-subtitles
-  " alt="License"/>
+  <img src="https://img.shields.io/github/license/caolib/live-subtitles" alt="License"/>
 </p>
+
+<p align="center">
+  简体中文 |
+  <a href="https://zdoc.app/en/caolib/live-subtitles">English</a> | 
+  <a href="https://zdoc.app/de/caolib/live-subtitles">Deutsch</a> | 
+  <a href="https://zdoc.app/es/caolib/live-subtitles">Español</a> | 
+  <a href="https://zdoc.app/fr/caolib/live-subtitles">français</a> | 
+  <a href="https://zdoc.app/ja/caolib/live-subtitles">日本語</a> | 
+  <a href="https://zdoc.app/ko/caolib/live-subtitles">한국어</a> | 
+  <a href="https://zdoc.app/pt/caolib/live-subtitles">Português</a> | 
+  <a href="https://zdoc.app/ru/caolib/live-subtitles">Русский</a> 
+</p>
+
+---
 
 一个实时字幕工具，基于 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 的 asr 模型完成实时字幕识别。
 
