@@ -157,11 +157,11 @@ body {
 }
 
 .action-btn.active {
-    background: #e81123;
+    background: #1677ff;
 }
 
 .action-btn.active:hover {
-    background: #c41019;
+    background: #0958d9;
 }
 
 /* ============================================

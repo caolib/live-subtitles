@@ -19,7 +19,9 @@ import {
     CheckCircleOutlined,
     CloseCircleOutlined,
     InfoCircleOutlined,
-    SyncOutlined
+    SyncOutlined,
+    BorderOutlined,
+    FullscreenExitOutlined
 } from "@ant-design/icons-vue";
 import { useSettingsStore } from "./stores/settings";
 
@@ -28,6 +30,13 @@ const appWindow = getCurrentWindow();
 
 async function minimizeWindow() {
     await appWindow.minimize();
+}
+
+const isMaximized = ref(false);
+
+async function toggleMaximize() {
+    await appWindow.toggleMaximize();
+    isMaximized.value = await appWindow.isMaximized();
 }
 
 async function closeWindow() {
@@ -466,7 +475,7 @@ async function saveConfig() {
 
         // 同步到后端（包括音频配置）
         await syncModelToBackend();
-        
+
         // 调试：输出当前音频配置
         console.log('[Audio] Saved audio config:', {
             audioSourceType: settingsStore.audioSourceType,
@@ -560,19 +569,22 @@ function buildProxyConfig() {
 
     // 如果启用了自定义代理
     if (settingsStore.useCustomProxy && settingsStore.proxyUrl) {
-        config.proxy = {
-            all: {
-                url: settingsStore.proxyUrl
-            }
-        };
+        let proxyUrl = settingsStore.proxyUrl;
 
-        // 如果配置了用户名和密码
+        // 如果配置了用户名和密码，将其嵌入到 URL 中
         if (settingsStore.proxyUsername && settingsStore.proxyPassword) {
-            config.proxy.all.basicAuth = {
-                username: settingsStore.proxyUsername,
-                password: settingsStore.proxyPassword
-            };
+            try {
+                const url = new URL(proxyUrl);
+                url.username = settingsStore.proxyUsername;
+                url.password = settingsStore.proxyPassword;
+                proxyUrl = url.toString();
+            } catch (e) {
+                console.error('Invalid proxy URL:', e);
+            }
         }
+
+        // proxy 参数应该是字符串
+        config.proxy = proxyUrl;
     }
     // 否则使用系统代理（默认行为）
 
@@ -735,7 +747,7 @@ const filteredAudioDevices = computed(() => {
 watch(() => settingsStore.audioSourceType, async (newType, oldType) => {
     console.log('[Audio] Audio source type changed to:', newType);
     console.log('[Audio] Switched to device ID:', currentAudioDeviceId.value);
-    
+
     // 只有在实际切换时才同步（排除初始加载）
     if (oldType !== undefined && newType !== oldType) {
         // 检查识别是否正在运行
@@ -745,7 +757,7 @@ watch(() => settingsStore.audioSourceType, async (newType, oldType) => {
         } catch (e) {
             console.warn("Failed to check recognition status:", e);
         }
-        
+
         // 如果正在运行，先停止
         if (wasRunning) {
             try {
@@ -755,11 +767,11 @@ watch(() => settingsStore.audioSourceType, async (newType, oldType) => {
                 console.error("Failed to stop recognition:", e);
             }
         }
-        
+
         // 同步音频配置到后端
         await syncModelToBackend();
         await new Promise(resolve => setTimeout(resolve, 300));
-        
+
         // 如果之前在运行，重新启动
         if (wasRunning) {
             try {
@@ -780,7 +792,7 @@ watch(() => currentAudioDeviceId.value, async (newDeviceId, oldDeviceId) => {
     // 只有在设备ID实际发生变化时才同步（排除初始加载和undefined）
     if (oldDeviceId !== undefined && newDeviceId !== oldDeviceId) {
         console.log('[Audio] Device ID changed from', oldDeviceId, 'to', newDeviceId);
-        
+
         // 检查识别是否正在运行
         let wasRunning = false;
         try {
@@ -788,7 +800,7 @@ watch(() => currentAudioDeviceId.value, async (newDeviceId, oldDeviceId) => {
         } catch (e) {
             console.warn("Failed to check recognition status:", e);
         }
-        
+
         // 如果正在运行，先停止
         if (wasRunning) {
             try {
@@ -798,13 +810,13 @@ watch(() => currentAudioDeviceId.value, async (newDeviceId, oldDeviceId) => {
                 console.error("Failed to stop recognition:", e);
             }
         }
-        
+
         // 同步配置
         await syncModelToBackend();
         await new Promise(resolve => setTimeout(resolve, 300));
-        
+
         const deviceName = filteredAudioDevices.value.find(d => d.id === newDeviceId)?.name || '默认设备';
-        
+
         // 如果之前在运行，重新启动
         if (wasRunning) {
             try {
@@ -823,22 +835,22 @@ watch(() => currentAudioDeviceId.value, async (newDeviceId, oldDeviceId) => {
 onMounted(async () => {
     loadConfig();
     await fetchAppVersion();
-    
+
     // 调试：显示从 localStorage 加载的音频配置
     console.log('[Audio] Loaded audio config from store:', {
         audioSourceType: settingsStore.audioSourceType,
         audioDeviceIdForSystem: settingsStore.audioDeviceIdForSystem,
         audioDeviceIdForMicrophone: settingsStore.audioDeviceIdForMicrophone
     });
-    
+
     // 自动枚举音频设备
     await enumerateAudioDevices();
-    
+
     // 枚举后再次检查当前设备ID是否有效
     if (currentAudioDeviceId.value) {
         const deviceExists = filteredAudioDevices.value.some(d => d.id === currentAudioDeviceId.value);
         console.log('[Audio] Device exists in filtered list:', deviceExists);
-        
+
         if (!deviceExists) {
             console.warn('[Audio] Saved device not found, clearing selection');
             message.warning('之前保存的音频设备未找到，已重置为默认设备');
@@ -857,6 +869,10 @@ onMounted(async () => {
                 <div class="window-controls" @mousedown.stop>
                     <button class="control-btn" @click="minimizeWindow" title="最小化">
                         <MinusOutlined />
+                    </button>
+                    <button class="control-btn" @click="toggleMaximize" :title="isMaximized ? '还原' : '最大化'">
+                        <FullscreenExitOutlined v-if="isMaximized" />
+                        <BorderOutlined v-else />
                     </button>
                     <button class="control-btn close-btn" @click="closeWindow" title="关闭">
                         <CloseOutlined />
@@ -1119,9 +1135,8 @@ onMounted(async () => {
                         <!-- 音频源类型 -->
                         <div class="form-item-with-hint">
                             <a-form-item label="音频源类型">
-                                <a-radio-group v-model:value="settingsStore.audioSourceType" 
-                                    :options="audioSourceTypeOptions"
-                                    option-type="button" button-style="solid" />
+                                <a-radio-group v-model:value="settingsStore.audioSourceType"
+                                    :options="audioSourceTypeOptions" option-type="button" button-style="solid" />
                             </a-form-item>
                             <div class="full-width-hint">
                                 <a-typography-text type="secondary" class="field-hint">
@@ -1134,28 +1149,22 @@ onMounted(async () => {
                         <div class="form-item-with-hint" v-if="settingsStore.audioSourceType === 'microphone'">
                             <a-form-item label="麦克风设备">
                                 <a-input-group compact class="full-width-input-group">
-                                    <a-select v-model:value="currentAudioDeviceId" 
-                                        style="width: calc(100% - 40px)"
-                                        placeholder="选择麦克风设备（留空使用默认设备）"
-                                        allow-clear
-                                        show-search
+                                    <a-select v-model:value="currentAudioDeviceId" style="width: calc(100% - 40px)"
+                                        placeholder="选择麦克风设备（留空使用默认设备）" allow-clear show-search
                                         @change="(value) => console.log('[Audio] Device selection changed to:', value)"
                                         :filter-option="(input, option) => {
                                             return option.label.toLowerCase().indexOf(input.toLowerCase()) >= 0;
                                         }">
-                                        <a-select-option v-for="device in filteredAudioDevices" 
-                                            :key="device.id" 
-                                            :value="device.id"
-                                            :label="device.name">
+                                        <a-select-option v-for="device in filteredAudioDevices" :key="device.id"
+                                            :value="device.id" :label="device.name">
                                             <span>
-                                                <CheckCircleOutlined v-if="device.is_default" 
+                                                <CheckCircleOutlined v-if="device.is_default"
                                                     style="color: #52c41a; margin-right: 4px;" />
                                                 {{ device.name }}
                                             </span>
                                         </a-select-option>
                                     </a-select>
-                                    <a-button @click="enumerateAudioDevices" 
-                                        :loading="loadingAudioDevices" 
+                                    <a-button @click="enumerateAudioDevices" :loading="loadingAudioDevices"
                                         title="刷新麦克风列表">
                                         <template #icon>
                                             <ReloadOutlined />
@@ -1192,13 +1201,13 @@ onMounted(async () => {
                         </div>
 
                         <a-form-item label="代理地址" v-if="settingsStore.useCustomProxy">
-                            <a-input v-model:value="settingsStore.proxyUrl"
-                                placeholder="例如: http://proxy.example.com:8080" style="width: 100%" />
+                            <a-input v-model:value="settingsStore.proxyUrl" placeholder="例如: http://localhost:7890"
+                                style="width: 100%" />
                         </a-form-item>
 
                         <div v-if="settingsStore.useCustomProxy">
                             <a-divider orientation="left">
-                                <span style="font-size: 13px; color: rgba(0, 0, 0, 0.45);">代理认证（可选）</span>
+                                <span style="font-size: 13px;">代理认证</span>
                             </a-divider>
 
                             <a-form-item label="用户名">

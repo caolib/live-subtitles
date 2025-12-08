@@ -16,7 +16,9 @@ import {
   UnlockOutlined,
   MessageOutlined,
   CommentOutlined,
-  FormatPainterOutlined
+  FormatPainterOutlined,
+  BorderOutlined,
+  FullscreenExitOutlined
 } from "@ant-design/icons-vue";
 import { storeToRefs } from "pinia";
 import { useSettingsStore } from "./stores/settings";
@@ -121,8 +123,8 @@ async function syncModelConfigToBackend() {
 
   try {
     // 获取当前音频源对应的设备ID
-    const currentDeviceId = settingsStore.audioSourceType === 'systemaudio' 
-      ? settingsStore.audioDeviceIdForSystem 
+    const currentDeviceId = settingsStore.audioSourceType === 'systemaudio'
+      ? settingsStore.audioDeviceIdForSystem
       : settingsStore.audioDeviceIdForMicrophone;
 
     const config = {
@@ -202,6 +204,14 @@ async function hideWindow() {
 // 最小化窗口
 async function minimizeWindow() {
   await appWindow.minimize();
+}
+
+// 最大化/还原窗口
+const isMaximized = ref(false);
+
+async function toggleMaximize() {
+  await appWindow.toggleMaximize();
+  isMaximized.value = await appWindow.isMaximized();
 }
 
 // 开始拖动
@@ -411,6 +421,10 @@ const historyText = computed(() => {
         <div class="top-bar-right" @mousedown.stop>
           <button class="control-btn" @click="minimizeWindow" title="最小化">
             <MinusOutlined />
+          </button>
+          <button class="control-btn" @click="toggleMaximize" :title="isMaximized ? '还原' : '最大化'">
+            <FullscreenExitOutlined v-if="isMaximized" />
+            <BorderOutlined v-else />
           </button>
           <button class="control-btn close-btn" @click="hideWindow" title="隐藏到托盘">
             <CloseOutlined />

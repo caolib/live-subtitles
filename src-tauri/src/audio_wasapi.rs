@@ -30,16 +30,6 @@ pub struct AudioCapture {
 pub type AudioReceiver = Receiver<Vec<f32>>;
 
 impl AudioCapture {
-    /// 创建音频捕获器
-    ///
-    /// # 参数
-    /// * `target_sample_rate` - 目标采样率
-    /// * `capture_mode` - 捕获模式（系统音频或麦克风）
-    /// * `device_id` - 设备ID（None 表示使用默认设备）
-    pub fn new(target_sample_rate: u32) -> Self {
-        Self::new_with_device(target_sample_rate, CaptureMode::SystemAudio, None)
-    }
-
     /// 创建指定设备的音频捕获器
     pub fn new_with_device(
         target_sample_rate: u32,
