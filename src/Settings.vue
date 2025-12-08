@@ -708,21 +708,13 @@ async function enumerateAudioDevices() {
     }
 }
 
-// 计算当前音频源类型对应的设备ID (支持双向绑定)
+// 计算当前麦克风设备ID (支持双向绑定)
 const currentAudioDeviceId = computed({
     get() {
-        if (settingsStore.audioSourceType === 'systemaudio') {
-            return settingsStore.audioDeviceIdForSystem;
-        } else {
-            return settingsStore.audioDeviceIdForMicrophone;
-        }
+        return settingsStore.audioDeviceIdForMicrophone;
     },
     set(value) {
-        if (settingsStore.audioSourceType === 'systemaudio') {
-            settingsStore.audioDeviceIdForSystem = value;
-        } else {
-            settingsStore.audioDeviceIdForMicrophone = value;
-        }
+        settingsStore.audioDeviceIdForMicrophone = value;
     }
 });
 
@@ -1138,13 +1130,13 @@ onMounted(async () => {
                             </div>
                         </div>
 
-                        <!-- 音频设备选择 -->
-                        <div class="form-item-with-hint">
-                            <a-form-item label="音频设备">
+                        <!-- 麦克风设备选择（仅在麦克风模式显示） -->
+                        <div class="form-item-with-hint" v-if="settingsStore.audioSourceType === 'microphone'">
+                            <a-form-item label="麦克风设备">
                                 <a-input-group compact class="full-width-input-group">
                                     <a-select v-model:value="currentAudioDeviceId" 
                                         style="width: calc(100% - 40px)"
-                                        placeholder="选择音频设备（留空使用默认设备）"
+                                        placeholder="选择麦克风设备（留空使用默认设备）"
                                         allow-clear
                                         show-search
                                         @change="(value) => console.log('[Audio] Device selection changed to:', value)"
@@ -1164,7 +1156,7 @@ onMounted(async () => {
                                     </a-select>
                                     <a-button @click="enumerateAudioDevices" 
                                         :loading="loadingAudioDevices" 
-                                        title="刷新设备列表">
+                                        title="刷新麦克风列表">
                                         <template #icon>
                                             <ReloadOutlined />
                                         </template>
@@ -1173,7 +1165,7 @@ onMounted(async () => {
                             </a-form-item>
                             <div class="full-width-hint">
                                 <a-typography-text type="secondary" class="field-hint">
-                                    已检测到 {{ filteredAudioDevices.length }} 个{{ settingsStore.audioSourceType === 'systemaudio' ? '系统音频' : '麦克风' }}设备
+                                    已检测到 {{ filteredAudioDevices.length }} 个麦克风设备
                                     <CheckCircleOutlined style="color: #52c41a; margin: 0 4px;" />
                                     标记表示默认设备
                                 </a-typography-text>

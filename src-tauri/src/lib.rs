@@ -285,15 +285,20 @@ async fn start_recognition(
     use audio_wasapi::CaptureMode;
 
     #[cfg(target_os = "windows")]
-    let capture_mode = match config.audio_source_type {
-        config::AudioSourceType::SystemAudio => CaptureMode::SystemAudio,
-        config::AudioSourceType::Microphone => CaptureMode::Microphone,
-    };
-
-    let device_id = if config.audio_device_id.is_empty() {
-        None
-    } else {
-        Some(config.audio_device_id.clone())
+    let (capture_mode, device_id) = match config.audio_source_type {
+        config::AudioSourceType::SystemAudio => {
+            // 系统音频始终使用默认输出设备
+            (CaptureMode::SystemAudio, None)
+        }
+        config::AudioSourceType::Microphone => {
+            // 麦克风使用用户选择的设备ID
+            let device_id = if config.audio_device_id.is_empty() {
+                None
+            } else {
+                Some(config.audio_device_id.clone())
+            };
+            (CaptureMode::Microphone, device_id)
+        }
     };
 
     #[cfg(target_os = "windows")]

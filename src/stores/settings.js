@@ -26,7 +26,6 @@ export const useSettingsStore = defineStore('settings', () => {
     // ========== 音频设置 ==========
     const audioSourceType = ref('systemaudio') // 音频源类型: 'systemaudio' 或 'microphone'
     const audioDeviceId = ref('') // 已废弃，保留用于兼容
-    const audioDeviceIdForSystem = ref('') // 系统音频设备ID
     const audioDeviceIdForMicrophone = ref('') // 麦克风设备ID
     const availableAudioDevices = ref([]) // 可用的音频设备列表
 
@@ -303,7 +302,6 @@ export const useSettingsStore = defineStore('settings', () => {
         proxyPassword.value = ''
         audioSourceType.value = 'systemaudio'
         audioDeviceId.value = ''
-        audioDeviceIdForSystem.value = ''
         audioDeviceIdForMicrophone.value = ''
         availableAudioDevices.value = []
         modelsRootDir.value = ''
@@ -324,7 +322,6 @@ export const useSettingsStore = defineStore('settings', () => {
         proxyPassword,
         audioSourceType,
         audioDeviceId,
-        audioDeviceIdForSystem,
         audioDeviceIdForMicrophone,
         availableAudioDevices,
         modelsRootDir,
@@ -368,7 +365,6 @@ export const useSettingsStore = defineStore('settings', () => {
             'proxyPassword',
             'audioSourceType',
             'audioDeviceId',
-            'audioDeviceIdForSystem',
             'audioDeviceIdForMicrophone',
             'modelsRootDir',
             'currentModelId',
