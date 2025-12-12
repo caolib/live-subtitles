@@ -9,6 +9,7 @@ export const useSettingsStore = defineStore('settings', () => {
     // ========== 显示设置 ==========
     const showHistory = ref(true)
     const maxHistoryLength = ref(0) // 0 表示无限制
+    const lowercaseSubtitle = ref(true) // 英文字幕默认小写
 
     // ========== 主题设置 ==========
     // 'light' | 'dark' | 'system'
@@ -323,6 +324,7 @@ export const useSettingsStore = defineStore('settings', () => {
         // 状态
         showHistory,
         maxHistoryLength,
+        lowercaseSubtitle,
         themeMode,
         rememberWindowState,
         useCustomProxy,
@@ -367,6 +369,7 @@ export const useSettingsStore = defineStore('settings', () => {
         pick: [
             'showHistory',
             'maxHistoryLength',
+            'lowercaseSubtitle',
             'themeMode',
             'rememberWindowState',
             'useCustomProxy',

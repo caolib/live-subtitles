@@ -407,16 +407,16 @@ async function selectModelsRootDir() {
         });
         if (selected) {
             const oldPath = settingsStore.modelsRootDir;
-            
+
             // 如果路径发生变化，清除旧的模型相关配置
             if (oldPath && oldPath !== selected) {
                 settingsStore.clearModelConfigs();
             }
-            
+
             settingsStore.modelsRootDir = selected;
             // 自动扫描模型
             await scanModelsRootDir();
-            
+
             // 如果路径发生变化，提示用户
             if (oldPath && oldPath !== selected) {
                 message.success("模型文件夹路径已更新，相关配置已重置");
@@ -895,12 +895,11 @@ onMounted(async () => {
                     </template>
 
                     <!-- 模型下载提示 -->
-                    <a-alert type="info" show-icon style="margin-bottom: 16px;">
+                    <a-alert type="info" show-icon style="margin-bottom: 16px;width: fit-content;">
                         <template #message>
-                            <div>模型下载地址：</div>
-                            <div style="margin-top: 4px;">
+                            <div>模型下载地址：
                                 <a href="https://k2-fsa.github.io/sherpa/onnx/pretrained_models/online-transducer/index.html"
-                                    target="_blank" style="color: #1890ff; margin-right: 16px;">sherpa-onnx 模型列表</a>
+                                    target="_blank" style="color: #1890ff; margin-right: 16px;">sherpa-onnx 模型列表</a>/
                                 <a href="https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models" target="_blank"
                                     style="color: #1890ff;">GitHub Releases</a>
                             </div>
@@ -987,7 +986,7 @@ onMounted(async () => {
                                 <a-input :value="currentModelDetails.model_dir" disabled />
                             </a-form-item>
 
-                            <a-form-item label="Encoder">
+                            <a-form-item label="encoder">
                                 <a-input-group compact class="full-width-input-group">
                                     <a-tooltip :title="currentModelAdvancedForm.encoder || '未配置'" placement="top">
                                         <a-input :value="getDisplayFileName(currentModelAdvancedForm.encoder)"
@@ -1013,7 +1012,7 @@ onMounted(async () => {
                                 </a-input-group>
                             </a-form-item>
 
-                            <a-form-item label="Decoder">
+                            <a-form-item label="decoder">
                                 <a-input-group compact class="full-width-input-group">
                                     <a-tooltip :title="currentModelAdvancedForm.decoder || '未配置'" placement="top">
                                         <a-input :value="getDisplayFileName(currentModelAdvancedForm.decoder)"
@@ -1039,7 +1038,7 @@ onMounted(async () => {
                                 </a-input-group>
                             </a-form-item>
 
-                            <a-form-item label="Joiner">
+                            <a-form-item label="joiner">
                                 <a-input-group compact class="full-width-input-group">
                                     <a-tooltip :title="currentModelAdvancedForm.joiner || '未配置'" placement="top">
                                         <a-input :value="getDisplayFileName(currentModelAdvancedForm.joiner)"
@@ -1065,7 +1064,7 @@ onMounted(async () => {
                                 </a-input-group>
                             </a-form-item>
 
-                            <a-form-item label="Tokens">
+                            <a-form-item label="tokens">
                                 <a-input-group compact class="full-width-input-group">
                                     <a-tooltip :title="currentModelAdvancedForm.tokens || '未配置'" placement="top">
                                         <a-input :value="getDisplayFileName(currentModelAdvancedForm.tokens)"
@@ -1092,8 +1091,8 @@ onMounted(async () => {
                             </a-form-item>
 
                             <div class="model-status-summary">
-                                <a-alert :type="isModelComplete ? 'success' : 'warning'"
-                                    :message="isModelComplete ? '模型配置完整，可以使用' : '模型配置不完整，请检查缺失的文件'" show-icon />
+                                <a-alert v-if="!isModelComplete" type="warning" style="width: fit-content;"
+                                    message='模型配置不完整，请检查缺失的文件' show-icon />
                             </div>
                         </div>
                     </a-form>
@@ -1517,7 +1516,7 @@ textarea {
     margin-bottom: 16px;
 }
 
-.aligned-form :deep(.ant-form-item-label) {
+/* .aligned-form :deep(.ant-form-item-label) {
     width: 120px;
     flex-shrink: 0;
     text-align: left;
@@ -1527,7 +1526,7 @@ textarea {
 .aligned-form :deep(.ant-form-item-label > label) {
     height: auto;
     line-height: 32px;
-}
+} */
 
 .form-item-content {
     display: flex;

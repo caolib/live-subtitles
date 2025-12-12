@@ -220,18 +220,41 @@ body {
     font-weight: 500;
     line-height: 1.4;
     text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
-    animation: fadeIn 0.3s ease;
 }
 
-@keyframes fadeIn {
-    from {
+/* 字幕初次出现的动画 - 弹性效果 */
+@keyframes subtitleAppear {
+    0% {
         opacity: 0;
-        transform: translateY(5px);
+        transform: translateY(15px) scale(0.95);
+        filter: blur(4px);
+    }
+
+    50% {
+        opacity: 0.8;
+        transform: translateY(-2px) scale(1.02);
+        filter: blur(0);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+    }
+}
+
+/* 历史字幕淡入效果 */
+.history-text {
+    animation: historyFadeIn 0.3s ease-out;
+}
+
+@keyframes historyFadeIn {
+    from {
+        opacity: 0.2;
     }
 
     to {
         opacity: 1;
-        transform: translateY(0);
     }
 }
 

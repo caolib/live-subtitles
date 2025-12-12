@@ -19,7 +19,8 @@ import {
   FormatPainterOutlined,
   BorderOutlined,
   FullscreenExitOutlined,
-  LoadingOutlined
+  LoadingOutlined,
+  FontSizeOutlined
 } from "@ant-design/icons-vue";
 import { storeToRefs } from "pinia";
 import { useSettingsStore } from "./stores/settings";
@@ -348,11 +349,26 @@ onUnmounted(() => {
 // 最新的字幕（正在识别的文本，或最后一条已完成的）
 const latestSubtitle = computed(() => {
   if (currentText.value) {
-    return currentText.value;
+    return processText(currentText.value);
   }
   if (subtitles.value.length === 0) return "";
-  return subtitles.value[subtitles.value.length - 1].text;
+  return processText(subtitles.value[subtitles.value.length - 1].text);
 });
+
+// 处理文本：根据配置决定是否转小写
+function processText(text) {
+  if (!text) return text;
+  // 如果启用了小写配置，将英文字母转换为小写
+  if (settingsStore.lowercaseSubtitle) {
+    return text.replace(/[A-Z]/g, char => char.toLowerCase());
+  }
+  return text;
+}
+
+// 切换大小写模式
+function toggleCase() {
+  settingsStore.lowercaseSubtitle = !settingsStore.lowercaseSubtitle;
+}
 
 // 历史字幕 (已完成的字幕，如果有正在识别的则显示全部，否则除了最后一条)
 const historySubtitles = computed(() => {
@@ -372,7 +388,7 @@ const historySubtitles = computed(() => {
 
 // 历史字幕文本（带长度限制）
 const historyText = computed(() => {
-  const text = historySubtitles.value.map(s => s.text).join(' ');
+  const text = historySubtitles.value.map(s => processText(s.text)).join(' ');
   if (settingsStore.maxHistoryLength > 0 && text.length > settingsStore.maxHistoryLength) {
     return '...' + text.slice(-settingsStore.maxHistoryLength);
   }
@@ -405,6 +421,10 @@ const historyText = computed(() => {
             :title="settingsStore.showHistory ? '隐藏历史' : '显示历史'">
             <MessageOutlined v-if="settingsStore.showHistory" />
             <CommentOutlined v-else />
+          </button>
+          <button class="action-btn" :class="{ active: settingsStore.lowercaseSubtitle }" @click="toggleCase"
+            :title="settingsStore.lowercaseSubtitle ? '当前:小写' : '当前:原始'">
+            <FontSizeOutlined />
           </button>
           <button class="action-btn" @click="copyAllText" title="复制全部">
             <CopyOutlined />

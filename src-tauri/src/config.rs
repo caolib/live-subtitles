@@ -138,18 +138,38 @@ impl ScannedModelFiles {
                     .unwrap_or("")
                     .to_lowercase();
 
+                // 调试日志
+                println!(
+                    "[Scan] Found file: {} (lowercase: {})",
+                    path.display(),
+                    file_name
+                );
+
                 // 收集所有模型文件
                 if file_name.contains("encoder") && file_name.ends_with(".onnx") {
+                    println!("[Scan]   -> Matched as encoder");
                     encoders.push(path.to_string_lossy().to_string());
                 } else if file_name.contains("decoder") && file_name.ends_with(".onnx") {
+                    println!("[Scan]   -> Matched as decoder");
                     decoders.push(path.to_string_lossy().to_string());
                 } else if file_name.contains("joiner") && file_name.ends_with(".onnx") {
+                    println!("[Scan]   -> Matched as joiner");
                     joiners.push(path.to_string_lossy().to_string());
                 } else if file_name.contains("tokens") && file_name.ends_with(".txt") {
+                    println!("[Scan]   -> Matched as tokens");
                     result.tokens = Some(path.to_string_lossy().to_string());
                 }
             }
         }
+
+        println!(
+            "[Scan] Result for {}: encoder={:?}, decoder={:?}, joiner={:?}, tokens={:?}",
+            result.model_name,
+            result.encoder.is_some(),
+            result.decoder.is_some(),
+            result.joiner.is_some(),
+            result.tokens.is_some()
+        );
 
         // 优先选择 int8 版本作为默认版本（更快）
         result.encoder = encoders
