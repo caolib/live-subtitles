@@ -407,12 +407,19 @@ async function selectModelsRootDir() {
         });
         if (selected) {
             const oldPath = settingsStore.modelsRootDir;
+            
+            // 如果路径发生变化，清除旧的模型相关配置
+            if (oldPath && oldPath !== selected) {
+                settingsStore.clearModelConfigs();
+            }
+            
             settingsStore.modelsRootDir = selected;
             // 自动扫描模型
             await scanModelsRootDir();
-            // 如果路径发生变化，提示用户重启
+            
+            // 如果路径发生变化，提示用户
             if (oldPath && oldPath !== selected) {
-                message.warning("模型文件夹路径已修改，建议重启应用以确保正常工作", 5);
+                message.success("模型文件夹路径已更新，相关配置已重置");
             }
         }
     } catch (e) {

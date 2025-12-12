@@ -203,6 +203,15 @@ export const useSettingsStore = defineStore('settings', () => {
     }
 
     /**
+     * 清除所有模型相关配置（当模型根目录变化时调用）
+     */
+    function clearModelConfigs() {
+        availableModels.value = []
+        currentModelId.value = ''
+        modelAdvancedConfig.value = {}
+    }
+
+    /**
      * 获取当前模型（非响应式，用于手动调用）
      */
     function getCurrentModelSync() {
@@ -343,6 +352,7 @@ export const useSettingsStore = defineStore('settings', () => {
         setAvailableModels,
         setAvailableAudioDevices,
         setModelAdvancedConfig,
+        clearModelConfigs,
         getCurrentModelSync,
         exportSettings,
         importSettings,
