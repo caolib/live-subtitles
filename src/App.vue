@@ -18,7 +18,8 @@ import {
   CommentOutlined,
   FormatPainterOutlined,
   BorderOutlined,
-  FullscreenExitOutlined
+  FullscreenExitOutlined,
+  LoadingOutlined
 } from "@ant-design/icons-vue";
 import { storeToRefs } from "pinia";
 import { useSettingsStore } from "./stores/settings";
@@ -449,8 +450,9 @@ const historyText = computed(() => {
       <div class="empty-state" v-else-if="!isRunning">
         <span>点击开始按钮开始识别</span>
       </div>
-      <div class="empty-state" v-else-if="isModelLoading">
-        <span>正在加载模型...</span>
+      <div class="loading-state" v-else-if="isModelLoading">
+        <LoadingOutlined class="loading-icon" spin />
+        <span>正在加载模型，请稍候...</span>
       </div>
       <div class="empty-state" v-else>
         <span>正在聆听...</span>
