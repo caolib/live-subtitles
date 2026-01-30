@@ -20,7 +20,8 @@ import {
   BorderOutlined,
   FullscreenExitOutlined,
   LoadingOutlined,
-  FontSizeOutlined
+  FontSizeOutlined,
+  SettingOutlined
 } from "@ant-design/icons-vue";
 import { storeToRefs } from "pinia";
 import { useSettingsStore } from "./stores/settings";
@@ -60,51 +61,113 @@ const ANIMATION_DURATION = 300; // 动画时长
 let expandTimeout = null;
 const appWindow = getCurrentWindow();
 let isAnimating = false; // 是否正在进行窗口大小动画
+let animationAbortController = null; // 用于中断动画
+let baseWindowHeight = null; // 窗口的基准高度（未展开时）
+let baseWindowWidth = null; // 窗口的基准宽度
 
 /**
- * 带有缓动效果的窗口大小调整
- * @param {number} targetHeightChange - 高度变化量 (正数变大，负数变小)
- * @param {number} duration - 动画持续时间
+ * 初始化基准窗口尺寸
  */
-async function animateWindowHeight(targetHeightChange, duration) {
-  if (targetHeightChange === 0) return;
+async function initBaseWindowSize() {
+  if (baseWindowHeight === null) {
+    const size = await appWindow.innerSize();
+    baseWindowWidth = size.width;
+    // 假设启动时是未展开状态
+    baseWindowHeight = size.height;
+  }
+}
+
+/**
+ * 带有缓动效果的窗口大小调整（基于绝对目标高度）
+ * @param {boolean} expanded - 目标状态：true=展开，false=收缩
+ * @param {number} duration - 动画持续时间
+ * @returns {Promise<boolean>} - 动画是否成功完成（未被中断）
+ */
+async function animateWindowToState(expanded, duration) {
+  // 确保基准高度已初始化
+  await initBaseWindowSize();
+
+  const targetHeight = expanded ? baseWindowHeight + EXPAND_HEIGHT : baseWindowHeight;
+
+  // 中断之前的动画
+  if (animationAbortController) {
+    animationAbortController.abort = true;
+  }
+
+  const currentController = { abort: false };
+  animationAbortController = currentController;
 
   isAnimating = true;
   try {
     const startSize = await appWindow.innerSize();
     const startHeight = startSize.height;
-    const targetHeight = startHeight + targetHeightChange;
-    const width = startSize.width;
+    const heightChange = targetHeight - startHeight;
+
+    // 如果高度已经是目标高度，无需动画
+    if (Math.abs(heightChange) < 2) {
+      return true;
+    }
 
     // 分割步数，每步约 16ms
     const steps = Math.max(10, Math.floor(duration / 16));
 
     for (let i = 1; i <= steps; i++) {
+      // 检查是否被中断
+      if (currentController.abort) {
+        return false;
+      }
+
       // 简单的 ease-out 算法
       const progress = i / steps;
       const easeProgress = 1 - Math.pow(1 - progress, 3);
 
-      const currentHeight = Math.round(startHeight + (targetHeightChange * easeProgress));
+      const currentHeight = Math.round(startHeight + (heightChange * easeProgress));
 
       await appWindow.setSize({
         type: 'Physical',
-        width: width,
+        width: baseWindowWidth,
         height: currentHeight
       });
-      // 无需显式 delay，await IPC 本身有耗时
+    }
+
+    // 检查是否被中断
+    if (currentController.abort) {
+      return false;
     }
 
     // 确保最终高度正确
     await appWindow.setSize({
       type: 'Physical',
-      width: width,
+      width: baseWindowWidth,
       height: targetHeight
     });
+
+    return true;
   } catch (e) {
     console.error("Window animation failed:", e);
+    return false;
   } finally {
-    isAnimating = false;
+    if (animationAbortController === currentController) {
+      isAnimating = false;
+      animationAbortController = null;
+    }
   }
+}
+
+/**
+ * 直接设置窗口到目标高度（基于基准高度）
+ * @param {boolean} expanded - 是否展开状态
+ */
+async function setWindowToTargetHeight(expanded) {
+  await initBaseWindowSize();
+
+  const targetHeight = expanded ? baseWindowHeight + EXPAND_HEIGHT : baseWindowHeight;
+
+  await appWindow.setSize({
+    type: 'Physical',
+    width: baseWindowWidth,
+    height: targetHeight
+  });
 }
 
 // 处理鼠标进入：展开窗口
@@ -116,19 +179,23 @@ async function handleMouseEnter() {
   if (expandTimeout) {
     clearTimeout(expandTimeout);
     expandTimeout = null;
-    isExpanded.value = true;
-    return;
   }
 
-  // 如果已经是展开显示状态，则无需操作
-  if (isExpanded.value || isAnimating) return;
+  // 如果已经是展开显示状态，确保高度正确后返回
+  if (isExpanded.value) {
+    // 如果正在动画中，中断它并直接设置到目标高度
+    if (isAnimating) {
+      await setWindowToTargetHeight(true);
+    }
+    return;
+  }
 
   try {
     // 触发 CSS 动画 (内容下移，工具栏出现)
     isExpanded.value = true;
 
-    // 执行窗口高度增加动画
-    animateWindowHeight(EXPAND_HEIGHT, 200);
+    // 执行窗口高度增加动画（基于绝对目标高度）
+    await animateWindowToState(true, 200);
   } catch (e) {
     console.error("Expand window failed:", e);
   }
@@ -149,24 +216,24 @@ async function handleMouseLeave() {
 
   // 延迟缩小窗口，等待 CSS 动画完成
   expandTimeout = setTimeout(async () => {
+    expandTimeout = null;
+
     // 再次检查拖动状态，防止在拖动过程中定时器触发
     if (Date.now() - lastDragTime < ANIMATION_DURATION + 200) {
-      expandTimeout = null;
       return;
     }
 
     try {
-      // 检查鼠标是否真的离开了
-      if (isHovering.value) {
-        isExpanded.value = true;
+      // 检查鼠标是否真的离开了，以及是否应该保持收缩状态
+      if (isHovering.value || isExpanded.value) {
         return;
       }
 
-      await animateWindowHeight(-EXPAND_HEIGHT, 200);
+      // 执行窗口收缩动画（基于绝对目标高度）
+      await animateWindowToState(false, 200);
     } catch (e) {
       console.error("Shrink window failed:", e);
     }
-    expandTimeout = null;
   }, ANIMATION_DURATION);
 }
 
@@ -242,6 +309,15 @@ async function openStyleEditor() {
     await invoke("open_style_editor");
   } catch (e) {
     console.error("Failed to open style editor:", e);
+  }
+}
+
+// 打开设置窗口
+async function openSettings() {
+  try {
+    await invoke("open_settings");
+  } catch (e) {
+    console.error("Failed to open settings:", e);
   }
 }
 
@@ -373,8 +449,23 @@ let unlistenClose = null;
 let unlistenModelLoading = null;
 let unlistenModelSwitched = null;
 let unlistenSettingsSync = null;
+let unlistenResize = null;
 
 onMounted(async () => {
+  // 初始化基准窗口尺寸
+  await initBaseWindowSize();
+
+  // 监听窗口大小变化，更新基准尺寸（用户手动调整时）
+  unlistenResize = await appWindow.onResized(async ({ payload: size }) => {
+    // 如果正在动画中，忽略此次变化（是我们的动画导致的）
+    if (isAnimating) return;
+
+    // 用户手动调整了窗口大小，更新基准尺寸
+    baseWindowWidth = size.width;
+    // 如果当前是展开状态，需要减去展开高度得到基准高度
+    baseWindowHeight = isExpanded.value ? size.height - EXPAND_HEIGHT : size.height;
+  });
+
   // 加载自定义样式
   await loadCustomStyle();
   // 监听样式文件变化
@@ -482,6 +573,7 @@ onUnmounted(() => {
   if (unlistenModelLoading) unlistenModelLoading();
   if (unlistenModelSwitched) unlistenModelSwitched();
   if (unlistenSettingsSync) unlistenSettingsSync();
+  if (unlistenResize) unlistenResize();
   // 清理样式文件监听
   if (styleWatchInterval) clearInterval(styleWatchInterval);
   // 移除自定义样式元素
@@ -645,6 +737,9 @@ const dynamicHistorySubtitleStyle = computed(() => {
           </button>
           <button class="action-btn" @click="openStyleEditor" title="编辑样式">
             <FormatPainterOutlined />
+          </button>
+          <button class="action-btn" @click="openSettings" title="设置">
+            <SettingOutlined />
           </button>
         </div>
         <div class="top-bar-right" @mousedown.stop>

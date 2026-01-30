@@ -1403,7 +1403,7 @@ onMounted(async () => {
                                             title="点击选择颜色" />
                                     </div>
                                     <span style="font-family: monospace;">{{ settingsStore.subtitleBackgroundColor
-                                    }}</span>
+                                        }}</span>
                                 </div>
                             </a-form-item>
                         </div>
