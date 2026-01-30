@@ -27,6 +27,21 @@ import { useSettingsStore } from "./stores/settings";
 
 // Pinia Store
 const settingsStore = useSettingsStore();
+
+// 监听字体家族变化，更新 CSS 变量
+// 这样可以全局应用字体，无需为每个元素单独设置
+watch(
+  () => settingsStore.subtitleFontFamily,
+  (newVal) => {
+    if (newVal) {
+      document.documentElement.style.setProperty('--main-font-family', newVal);
+    } else {
+      document.documentElement.style.removeProperty('--main-font-family');
+    }
+  },
+  { immediate: true }
+);
+
 // 使用 storeToRefs 确保响应式
 const { currentModelId, currentModel, availableModels } = storeToRefs(settingsStore);
 
@@ -39,6 +54,121 @@ const currentText = ref(""); // 正在识别的文本（中间结果）
 const maxSubtitles = 5; // 最多显示的字幕条数
 const errorMessage = ref("");
 const isHovering = ref(false); // 鼠标是否在窗口上
+const isExpanded = ref(false); // 窗口是否展开（显示工具栏）
+const EXPAND_HEIGHT = 40; // 展开高度 (40px 工具栏，无间隔)
+const ANIMATION_DURATION = 300; // 动画时长
+let expandTimeout = null;
+const appWindow = getCurrentWindow();
+let isAnimating = false; // 是否正在进行窗口大小动画
+
+/**
+ * 带有缓动效果的窗口大小调整
+ * @param {number} targetHeightChange - 高度变化量 (正数变大，负数变小)
+ * @param {number} duration - 动画持续时间
+ */
+async function animateWindowHeight(targetHeightChange, duration) {
+  if (targetHeightChange === 0) return;
+
+  isAnimating = true;
+  try {
+    const startSize = await appWindow.innerSize();
+    const startHeight = startSize.height;
+    const targetHeight = startHeight + targetHeightChange;
+    const width = startSize.width;
+
+    // 分割步数，每步约 16ms
+    const steps = Math.max(10, Math.floor(duration / 16));
+
+    for (let i = 1; i <= steps; i++) {
+      // 简单的 ease-out 算法
+      const progress = i / steps;
+      const easeProgress = 1 - Math.pow(1 - progress, 3);
+
+      const currentHeight = Math.round(startHeight + (targetHeightChange * easeProgress));
+
+      await appWindow.setSize({
+        type: 'Physical',
+        width: width,
+        height: currentHeight
+      });
+      // 无需显式 delay，await IPC 本身有耗时
+    }
+
+    // 确保最终高度正确
+    await appWindow.setSize({
+      type: 'Physical',
+      width: width,
+      height: targetHeight
+    });
+  } catch (e) {
+    console.error("Window animation failed:", e);
+  } finally {
+    isAnimating = false;
+  }
+}
+
+// 处理鼠标进入：展开窗口
+async function handleMouseEnter() {
+  isHovering.value = true;
+  if (isLocked.value) return;
+
+  // 如果有正在等待执行的收缩任务，取消它
+  if (expandTimeout) {
+    clearTimeout(expandTimeout);
+    expandTimeout = null;
+    isExpanded.value = true;
+    return;
+  }
+
+  // 如果已经是展开显示状态，则无需操作
+  if (isExpanded.value || isAnimating) return;
+
+  try {
+    // 触发 CSS 动画 (内容下移，工具栏出现)
+    isExpanded.value = true;
+
+    // 执行窗口高度增加动画
+    animateWindowHeight(EXPAND_HEIGHT, 200);
+  } catch (e) {
+    console.error("Expand window failed:", e);
+  }
+}
+
+// 处理鼠标离开：收缩窗口
+async function handleMouseLeave() {
+  // 如果是刚刚触发了拖动，忽略此次离开事件（Tauri startDragging 会导致 mouseleave）
+  if (Date.now() - lastDragTime < 200) {
+    return;
+  }
+
+  isHovering.value = false;
+  if (isLocked.value || !isExpanded.value) return;
+
+  // 先触发 CSS 动画 (内容上移，工具栏消失)
+  isExpanded.value = false;
+
+  // 延迟缩小窗口，等待 CSS 动画完成
+  expandTimeout = setTimeout(async () => {
+    // 再次检查拖动状态，防止在拖动过程中定时器触发
+    if (Date.now() - lastDragTime < ANIMATION_DURATION + 200) {
+      expandTimeout = null;
+      return;
+    }
+
+    try {
+      // 检查鼠标是否真的离开了
+      if (isHovering.value) {
+        isExpanded.value = true;
+        return;
+      }
+
+      await animateWindowHeight(-EXPAND_HEIGHT, 200);
+    } catch (e) {
+      console.error("Shrink window failed:", e);
+    }
+    expandTimeout = null;
+  }, ANIMATION_DURATION);
+}
 
 // 当前模型名称 - 从 store 的 currentModel 计算得出（响应式）
 const currentModelName = computed(() => {
@@ -159,7 +289,7 @@ async function syncModelConfigToBackend() {
 }
 
 // 拖动相关
-const appWindow = getCurrentWindow();
+// const appWindow = getCurrentWindow();
 
 // 开始/停止识别
 async function toggleRecognition() {
@@ -217,8 +347,10 @@ async function toggleMaximize() {
 }
 
 // 开始拖动
+let lastDragTime = 0;
 function startDrag() {
   if (!isLocked.value) {
+    lastDragTime = Date.now();
     appWindow.startDragging();
   }
 }
@@ -240,6 +372,7 @@ let unlistenError = null;
 let unlistenClose = null;
 let unlistenModelLoading = null;
 let unlistenModelSwitched = null;
+let unlistenSettingsSync = null;
 
 onMounted(async () => {
   // 加载自定义样式
@@ -249,6 +382,16 @@ onMounted(async () => {
 
   // 如果有持久化的模型配置，同步到 Rust 后端
   await syncModelConfigToBackend();
+
+  // 监听设置同步事件（来自 Settings 窗口）
+  unlistenSettingsSync = await appWindow.listen('settings-sync', (event) => {
+    const appearance = event.payload;
+    if (appearance) {
+      // 更新本地 store
+      settingsStore.updateAppearanceSettings(appearance);
+      settingsStore.updateDisplaySettings(appearance); // showHistory 等在这里
+    }
+  });
 
   // 如果禁用了窗口状态记忆，重置窗口到默认位置
   if (!settingsStore.rememberWindowState) {
@@ -338,6 +481,7 @@ onUnmounted(() => {
   if (unlistenClose) unlistenClose();
   if (unlistenModelLoading) unlistenModelLoading();
   if (unlistenModelSwitched) unlistenModelSwitched();
+  if (unlistenSettingsSync) unlistenSettingsSync();
   // 清理样式文件监听
   if (styleWatchInterval) clearInterval(styleWatchInterval);
   // 移除自定义样式元素
@@ -394,12 +538,76 @@ const historyText = computed(() => {
   }
   return text;
 });
+
+// Hex 转 RGBA
+function hexToRgba(hex, alpha) {
+  let c;
+  if (/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) {
+    c = hex.substring(1).split('');
+    if (c.length === 3) {
+      c = [c[0], c[0], c[1], c[1], c[2], c[2]];
+    }
+    c = '0x' + c.join('');
+    return 'rgba(' + [(c >> 16) & 255, (c >> 8) & 255, c & 255].join(',') + ',' + alpha + ')';
+  }
+  // 如果已经是 rgba 或其他格式，直接返回
+  return hex;
+}
+
+// 动态计算的样式 - 字幕区域背景
+// 动态计算的样式 - 顶部工具栏
+const dynamicTopBarStyle = computed(() => {
+  const bg = settingsStore.subtitleBackgroundColor;
+  const opacity = settingsStore.subtitleBackgroundOpacity;
+  const backgroundColor = hexToRgba(bg, opacity);
+
+  return {
+    backgroundColor: backgroundColor,
+  };
+});
+
+// 动态计算的样式 - 字幕区域
+const dynamicSubtitleAreaStyle = computed(() => {
+  const bg = settingsStore.subtitleBackgroundColor;
+  const opacity = settingsStore.subtitleBackgroundOpacity;
+  const backgroundColor = hexToRgba(bg, opacity);
+
+  const style = {
+    backgroundColor: backgroundColor,
+  };
+
+  return style;
+});
+
+// 动态计算的样式 - 当前字幕
+const dynamicCurrentSubtitleStyle = computed(() => {
+  const style = {
+    fontSize: settingsStore.subtitleFontSize + 'px',
+    color: settingsStore.subtitleColor,
+  };
+
+  return style;
+});
+
+// 动态计算的样式 - 历史字幕
+const dynamicHistorySubtitleStyle = computed(() => {
+  const style = {
+    // 历史字幕字体为当前字体的 70%，且只有透明度变化
+    fontSize: Math.max(12, settingsStore.subtitleFontSize * 0.7) + 'px',
+    color: settingsStore.subtitleColor,
+    opacity: 0.6
+  };
+
+  return style;
+});
+
 </script>
 
 <template>
-  <div class="app-container">
+  <div class="app-container" :class="{ expanded: isExpanded }" @mouseenter="handleMouseEnter"
+    @mouseleave="handleMouseLeave">
     <!-- 顶部控制栏（自动隐藏） -->
-    <div class="top-bar" :class="{ locked: isLocked }" @mousedown="startDrag">
+    <div class="top-bar" :class="{ locked: isLocked }" :style="dynamicTopBarStyle" @mousedown="startDrag">
       <!-- 锁定时只显示解锁按钮 -->
       <template v-if="isLocked">
         <div class="top-bar-center" @mousedown.stop>
@@ -455,14 +663,14 @@ const historyText = computed(() => {
     </div>
 
     <!-- 字幕区域 -->
-    <div class="subtitle-area" @mouseenter="isHovering = true" @mouseleave="isHovering = false">
+    <div class="subtitle-area" :style="dynamicSubtitleAreaStyle">
       <!-- 历史字幕（合并显示，可滚动） -->
-      <div class="history-text" v-if="historyText">
+      <div class="history-text" v-if="historyText" :style="dynamicHistorySubtitleStyle">
         {{ historyText }}
       </div>
 
       <!-- 当前字幕（固定在底部） -->
-      <div class="current-subtitle" v-if="latestSubtitle">
+      <div class="current-subtitle" v-if="latestSubtitle" :style="dynamicCurrentSubtitleStyle">
         {{ latestSubtitle }}
       </div>
 
@@ -484,8 +692,7 @@ const historyText = computed(() => {
       </div>
 
       <!-- 模型名称显示（右下角，悬停时显示） -->
-      <div class="model-name" v-show="isHovering" @mousedown.stop @mouseenter="isHovering = true"
-        @mouseleave="isHovering = false">
+      <div class="model-name" v-show="isHovering" @mousedown.stop>
         {{ currentModelName }}
       </div>
     </div>

@@ -261,8 +261,11 @@ fn capture_loopback_audio(
                     };
 
                     if tx.send(output).is_err() {
-                        // 接收端已关闭
-                        break;
+                        // 接收端已关闭，停止捕获并返回
+                        println!("[SystemAudio] Channel closed, stopping capture");
+                        let _ = audio_client.Stop();
+                        CoUninitialize();
+                        return Ok(());
                     }
                 }
             }
@@ -475,8 +478,11 @@ fn capture_microphone_audio(
                     };
 
                     if tx.send(output).is_err() {
-                        eprintln!("[Microphone] ERROR: Failed to send audio data - channel closed");
-                        break;
+                        // 接收端已关闭，停止捕获并返回
+                        println!("[Microphone] Channel closed, stopping capture");
+                        let _ = audio_client.Stop();
+                        CoUninitialize();
+                        return Ok(());
                     }
                 }
             }

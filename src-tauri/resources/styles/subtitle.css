@@ -37,9 +37,10 @@ body {
     display: flex;
     flex-direction: column;
     height: 100%;
-    background: rgba(30, 30, 30, 0.9);
+    /* 移除背景，背景移动到 subtitle-area */
+    background: transparent;
     overflow: hidden;
-    backdrop-filter: blur(10px);
+    backdrop-filter: none;
 }
 
 /* ============================================
@@ -60,7 +61,11 @@ body {
     left: 0;
     right: 0;
     z-index: 100;
-    border-radius: 16px 16px 0 0;
+    height: 40px;
+    /* 固定高度，匹配 margin-top */
+    box-sizing: border-box;
+    /* 默认圆角 */
+    border-radius: 8px 8px 0 0;
     cursor: move;
 }
 
@@ -71,7 +76,7 @@ body {
 }
 
 /* 鼠标悬停时显示控制栏 */
-.app-container:hover .top-bar {
+.app-container.expanded .top-bar {
     opacity: 1;
     transform: translateY(0);
 }
@@ -176,6 +181,32 @@ body {
     overflow: hidden;
     min-height: 0;
     position: relative;
+    /* 背景和模糊效果移动到这里 */
+    background: rgba(30, 30, 30, 0.9);
+    backdrop-filter: blur(10px);
+
+    /* 默认不留顶栏空间 */
+    margin-top: 0;
+
+    /* 默认四角圆角 */
+    border-radius: 8px;
+
+    /* 添加过渡动画，使高度变化平滑 */
+    transition: margin-top 0.3s ease, border-radius 0.3s ease;
+}
+
+/* 悬浮时动态调整布局，给工具栏腾出空间 */
+/* 将 :hover 改为 .expanded 类控制，配合 JS 实现窗口高度变化 */
+.app-container.expanded .subtitle-area {
+    /* 下移，为顶部的工具栏腾出位置 */
+    /* 工具栏高度 40px，无缝衔接 */
+    margin-top: 40px;
+
+    /* 上部变为若直角，与工具栏视觉衔接 */
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
 }
 
 /* ============================================

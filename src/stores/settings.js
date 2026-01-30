@@ -15,6 +15,13 @@ export const useSettingsStore = defineStore('settings', () => {
     // 'light' | 'dark' | 'system'
     const themeMode = ref('system')
 
+    // ========== 外观设置 ==========
+    const subtitleFontSize = ref(20)
+    const subtitleFontFamily = ref('') // 空字符串表示使用默认字体
+    const subtitleColor = ref('#ffffff')
+    const subtitleBackgroundColor = ref('#1e1e1e')
+    const subtitleBackgroundOpacity = ref(0.9)
+
     // ========== 窗口设置 ==========
     const rememberWindowState = ref(true) // 记住窗口位置和大小
 
@@ -70,6 +77,11 @@ export const useSettingsStore = defineStore('settings', () => {
         },
         appearance: {
             themeMode: themeMode.value,
+            subtitleFontSize: subtitleFontSize.value,
+            subtitleFontFamily: subtitleFontFamily.value,
+            subtitleColor: subtitleColor.value,
+            subtitleBackgroundColor: subtitleBackgroundColor.value,
+            subtitleBackgroundOpacity: subtitleBackgroundOpacity.value,
         },
         window: {
             rememberWindowState: rememberWindowState.value,
@@ -111,6 +123,21 @@ export const useSettingsStore = defineStore('settings', () => {
     function updateAppearanceSettings(settings) {
         if (settings.themeMode !== undefined) {
             themeMode.value = settings.themeMode
+        }
+        if (settings.subtitleFontSize !== undefined) {
+            subtitleFontSize.value = settings.subtitleFontSize
+        }
+        if (settings.subtitleFontFamily !== undefined) {
+            subtitleFontFamily.value = settings.subtitleFontFamily
+        }
+        if (settings.subtitleColor !== undefined) {
+            subtitleColor.value = settings.subtitleColor
+        }
+        if (settings.subtitleBackgroundColor !== undefined) {
+            subtitleBackgroundColor.value = settings.subtitleBackgroundColor
+        }
+        if (settings.subtitleBackgroundOpacity !== undefined) {
+            subtitleBackgroundOpacity.value = settings.subtitleBackgroundOpacity
         }
     }
 
@@ -305,6 +332,11 @@ export const useSettingsStore = defineStore('settings', () => {
         showHistory.value = true
         maxHistoryLength.value = 0
         themeMode.value = 'system'
+        subtitleFontSize.value = 20
+        subtitleFontFamily.value = ''
+        subtitleColor.value = '#ffffff'
+        subtitleBackgroundColor.value = '#1e1e1e'
+        subtitleBackgroundOpacity.value = 0.9
         rememberWindowState.value = true
         useCustomProxy.value = false
         proxyUrl.value = ''
@@ -326,6 +358,11 @@ export const useSettingsStore = defineStore('settings', () => {
         maxHistoryLength,
         lowercaseSubtitle,
         themeMode,
+        subtitleFontSize,
+        subtitleFontFamily,
+        subtitleColor,
+        subtitleBackgroundColor,
+        subtitleBackgroundOpacity,
         rememberWindowState,
         useCustomProxy,
         proxyUrl,
@@ -371,6 +408,11 @@ export const useSettingsStore = defineStore('settings', () => {
             'maxHistoryLength',
             'lowercaseSubtitle',
             'themeMode',
+            'subtitleFontSize',
+            'subtitleFontFamily',
+            'subtitleColor',
+            'subtitleBackgroundColor',
+            'subtitleBackgroundOpacity',
             'rememberWindowState',
             'useCustomProxy',
             'proxyUrl',

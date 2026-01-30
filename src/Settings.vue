@@ -65,6 +65,9 @@ onMounted(() => {
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = (e) => { systemDark.value = e.matches; };
     mediaQuery.addEventListener("change", handler);
+
+    // 尝试加载系统字体
+    loadSystemFonts();
 });
 
 // 计算实际使用的主题算法
@@ -116,6 +119,76 @@ const audioSourceTypeOptions = [
     { label: "系统音频", value: "systemaudio" },
     { label: "麦克风输入", value: "microphone" },
 ];
+
+// 字体选项
+const fontFamilyOptions = ref([
+    { label: "默认字体", value: "" },
+    { label: "微软雅黑", value: "'Microsoft YaHei'" }, // Removed sans-serif etc to keep items clean for multi-select
+    { label: "黑体", value: "SimHei" },
+    { label: "宋体", value: "SimSun" },
+    { label: "仿宋", value: "FangSong" },
+    { label: "楷体", value: "KaiTi" },
+    { label: "JetBrains Mono", value: "'JetBrains Mono'" },
+    { label: "Consolas", value: "Consolas" },
+    { label: "Arial", value: "Arial" },
+    { label: "Helvetica", value: "Helvetica" },
+    { label: "Times New Roman", value: "'Times New Roman'" },
+    { label: "sans-serif", value: "sans-serif" },
+    { label: "serif", value: "serif" },
+    { label: "monospace", value: "monospace" },
+]);
+
+// 字体家族数组（适配多选组件）
+const fontFamilyArray = computed({
+    get: () => {
+        const val = settingsStore.subtitleFontFamily;
+        if (!val) return [];
+        // Handle cases where user might have manually typed simple comma separated strings
+        return val.split(',').map(s => s.trim()).filter(Boolean);
+    },
+    set: (val) => {
+        // Filter out empty values
+        const validFonts = val.filter(Boolean);
+        settingsStore.subtitleFontFamily = validFonts.join(', ');
+    }
+});
+
+// 加载系统字体
+async function loadSystemFonts() {
+    if ('queryLocalFonts' in window) {
+        try {
+            message.loading("正在加载系统字体...", 1);
+            const fonts = await window.queryLocalFonts();
+            const fontFamilies = new Set(fontFamilyOptions.value.map(o => o.value));
+
+            // 收集系统字体
+            const newOptions = [];
+            for (const font of fonts) {
+                if (!fontFamilies.has(font.family)) {
+                    fontFamilies.add(font.family);
+                    newOptions.push({
+                        label: font.family, // Keep label simple
+                        value: font.family.includes(' ') ? `'${font.family}'` : font.family // Quote if needed
+                    });
+                }
+            }
+
+            // 排序
+            newOptions.sort((a, b) => a.label.localeCompare(b.label));
+
+            fontFamilyOptions.value = [...fontFamilyOptions.value, ...newOptions];
+            message.success(`已加载 ${newOptions.length} 个系统字体`);
+            console.log(`Loaded ${newOptions.length} system fonts`);
+        } catch (e) {
+            console.error("Failed to query local fonts:", e);
+            message.error("加载系统字体失败，请手动输入");
+        }
+    } else {
+        console.warn("window.queryLocalFonts is not supported in this environment");
+        message.warning("当前环境不支持自动加载系统字体");
+    }
+}
+
 const appVersion = ref('加载中...');
 const hasUpdate = ref(false);
 const latestVersion = ref('');
@@ -302,40 +375,43 @@ async function syncModelToBackend() {
 // 监听当前模型变化，加载对应的高级配置并同步到后端
 watch(() => settingsStore.currentModelId, async (newId, oldId) => {
     console.log('Watch triggered - currentModelId changed:', { oldId, newId });
-    loadCurrentModelAdvancedConfig();
-    // 只有在实际切换模型时才同步（排除初始加载）
-    if (oldId && newId && oldId !== newId) {
-        const newModelName = settingsStore.getCurrentModelSync()?.model_name;
-        console.log(`Switching model from ${oldId} to ${newId} (${newModelName})`);
+    if (newId) {
+        // 当前模型变化时，不仅要加载配置，还要扫描模型详情
+        // 这是为了处理从空状态切换到模型的情况
+        if (!currentModelDetails.value) {
+            console.log('Model details not found, re-scanning...');
+            await scanModelsRootDir();
+        }
 
-        try {
-            // 1. 检查识别是否在运行
+        loadCurrentModelAdvancedConfig();
+
+        if (oldId && newId !== oldId) {
+            // 切换模型逻辑...
+            const newModel = settingsStore.availableModels.find(m => m.id === newId);
+            const newModelName = newModel ? newModel.model_name : newId;
+
+            // 1. 同步新配置到后端
+            await syncModelToBackend();
+
+            // 2. 检查当前是否正在运行
             let wasRunning = false;
             try {
                 wasRunning = await invoke("is_recognition_running");
-                console.log(`Recognition is ${wasRunning ? 'running' : 'stopped'}`);
             } catch (e) {
                 console.warn("Failed to check recognition status:", e);
             }
 
-            // 2. 如果正在运行，先停止
+            // 3. 停止当前识别
             if (wasRunning) {
-                console.log("Stopping recognition before switching model...");
+                console.log("Stopping current recognition...");
                 try {
                     await invoke("stop_recognition");
-                    // 等待更长时间确保完全停止
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    console.log("Recognition stopped");
+                    // 等待一小段时间确保资源释放
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 } catch (e) {
                     console.error("Failed to stop recognition:", e);
-                    // 继续尝试切换配置
                 }
             }
-
-            // 3. 切换模型配置
-            console.log("Syncing new model config to backend...");
-            await syncModelToBackend();
-            await new Promise(resolve => setTimeout(resolve, 500));
 
             // 4. 如果之前在运行，重新启动
             if (wasRunning) {
@@ -368,12 +444,44 @@ watch(() => settingsStore.currentModelId, async (newId, oldId) => {
             } catch (e) {
                 console.error('Failed to emit model-switched event:', e);
             }
-        } catch (e) {
-            message.error(`模型切换失败: ${e}`);
-            console.error("Failed to switch model:", e);
         }
     }
 });
+
+// 监听外观设置变化，实时同步给 App.vue
+watch(
+    () => [
+        settingsStore.subtitleFontSize,
+        settingsStore.subtitleFontFamily,
+        settingsStore.subtitleColor,
+        settingsStore.subtitleBackgroundColor,
+        settingsStore.subtitleBackgroundOpacity,
+        settingsStore.maxHistoryLength,
+        settingsStore.showHistory,
+        settingsStore.lowercaseSubtitle
+    ],
+    async () => {
+        try {
+            const appearance = {
+                subtitleFontSize: settingsStore.subtitleFontSize,
+                subtitleFontFamily: settingsStore.subtitleFontFamily,
+                subtitleColor: settingsStore.subtitleColor,
+                subtitleBackgroundColor: settingsStore.subtitleBackgroundColor,
+                subtitleBackgroundOpacity: settingsStore.subtitleBackgroundOpacity,
+                maxHistoryLength: settingsStore.maxHistoryLength,
+                showHistory: settingsStore.showHistory,
+                lowercaseSubtitle: settingsStore.lowercaseSubtitle
+            };
+            // 发送给所有窗口（主要是主窗口）
+            // 注意：使用 emitPayload 需要 @tauri-apps/api/event 虽然当前文件只导入了 getCurrentWindow 相关的
+            // 这里我们使用 appWindow.emit
+            await appWindow.emit('settings-sync', appearance);
+        } catch (e) {
+            console.error('Failed to sync settings:', e);
+        }
+    },
+    { deep: true }
+);
 
 // 选择文件
 async function selectFile(field) {
@@ -1239,6 +1347,79 @@ onMounted(async () => {
                             <a-radio-group v-model:value="settingsStore.themeMode" :options="themeOptions"
                                 option-type="button" button-style="solid" />
                         </a-form-item>
+
+                        <a-divider style="margin: 12px 0;">字幕样式</a-divider>
+
+                        <a-form-item label="字体大小">
+                            <div style="display: flex; flex-direction: column; width: 100%;">
+                                <div style="display: flex; align-items: center; gap: 16px;">
+                                    <a-slider v-model:value="settingsStore.subtitleFontSize" :min="12" :max="72"
+                                        :step="1" style="flex: 1" />
+                                    <a-input-number v-model:value="settingsStore.subtitleFontSize" :min="12" :max="72"
+                                        addon-after="px" style="width: 100px" />
+                                </div>
+                            </div>
+                        </a-form-item>
+
+                        <a-form-item label="字体家族">
+                            <div style="display: flex; gap: 8px;">
+                                <a-select mode="tags" v-model:value="fontFamilyArray" :options="fontFamilyOptions"
+                                    placeholder="选择或输入字体名称（支持多选）" style="flex: 1"
+                                    :filter-option="(input, option) => option.label.toLowerCase().includes(input.toLowerCase()) || option.value.toLowerCase().includes(input.toLowerCase())">
+                                </a-select>
+                                <a-button @click="loadSystemFonts" title="加载系统字体">
+                                    <template #icon>
+                                        <ReloadOutlined />
+                                    </template>
+                                </a-button>
+                            </div>
+                        </a-form-item>
+
+                        <div style="display: flex; gap: 24px;">
+                            <a-form-item label="字体颜色" style="flex: 1; margin-bottom: 0;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <div
+                                        style="position: relative; width: 32px; min-width: 32px; height: 32px; border-radius: 4px; border: 1px solid #888; overflow: hidden; cursor: pointer; flex-shrink: 0;">
+                                        <div
+                                            :style="{ backgroundColor: settingsStore.subtitleColor, width: '100%', height: '100%' }">
+                                        </div>
+                                        <input type="color" v-model="settingsStore.subtitleColor"
+                                            style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; border: none;"
+                                            title="点击选择颜色" />
+                                    </div>
+                                    <span style="font-family: monospace;">{{ settingsStore.subtitleColor }}</span>
+                                </div>
+                            </a-form-item>
+
+                            <a-form-item label="背景颜色" style="flex: 1; margin-bottom: 0;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <div
+                                        style="position: relative; width: 32px; min-width: 32px; height: 32px; border-radius: 4px; border: 1px solid #888; overflow: hidden; cursor: pointer; flex-shrink: 0;">
+                                        <div
+                                            :style="{ backgroundColor: settingsStore.subtitleBackgroundColor, width: '100%', height: '100%' }">
+                                        </div>
+                                        <input type="color" v-model="settingsStore.subtitleBackgroundColor"
+                                            style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; border: none;"
+                                            title="点击选择颜色" />
+                                    </div>
+                                    <span style="font-family: monospace;">{{ settingsStore.subtitleBackgroundColor
+                                    }}</span>
+                                </div>
+                            </a-form-item>
+                        </div>
+
+                        <a-form-item label="背景透明度">
+                            <div style="display: flex; flex-direction: column; width: 100%;">
+                                <div style="display: flex; align-items: center; gap: 16px;">
+                                    <a-slider v-model:value="settingsStore.subtitleBackgroundOpacity" :min="0" :max="1"
+                                        :step="0.05" style="flex: 1" />
+                                    <a-input-number v-model:value="settingsStore.subtitleBackgroundOpacity" :min="0"
+                                        :max="1" :step="0.05" style="width: 80px" />
+                                </div>
+                            </div>
+                        </a-form-item>
+
+                        <a-divider style="margin: 12px 0;">窗口选项</a-divider>
 
                         <div class="form-item-with-hint">
                             <a-form-item label="记住窗口状态">
