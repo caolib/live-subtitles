@@ -48,3 +48,6 @@ tokio = { version = "1", features = ["sync", "rt-multi-thread"] }
 # 音频重采样
 rubato = "0.16"
 
+# 日期时间处理
+chrono = { version = "0.4", features = ["serde"] }
+

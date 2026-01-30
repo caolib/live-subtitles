@@ -41,6 +41,8 @@ body {
     background: transparent;
     overflow: hidden;
     backdrop-filter: none;
+    user-select: none;
+    /* 默认不可选择，防止拖拽时意外选中背景 */
 }
 
 /* ============================================
@@ -177,7 +179,7 @@ body {
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
-    padding: 12px 16px;
+    padding: 5px 10px;
     overflow: hidden;
     min-height: 0;
     position: relative;
@@ -198,15 +200,10 @@ body {
 /* 悬浮时动态调整布局，给工具栏腾出空间 */
 /* 将 :hover 改为 .expanded 类控制，配合 JS 实现窗口高度变化 */
 .app-container.expanded .subtitle-area {
-    /* 下移，为顶部的工具栏腾出位置 */
-    /* 工具栏高度 40px，无缝衔接 */
-    margin-top: 40px;
-
-    /* 上部变为若直角，与工具栏视觉衔接 */
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
-    border-bottom-left-radius: 8px;
-    border-bottom-right-radius: 8px;
+    /* 移除 margin-top，因为现在没有独立占据空间的 TopBar 了 */
+    margin-top: 0;
+    /* 修复圆角逻辑，保持统一 */
+    border-radius: 8px;
 }
 
 /* ============================================
@@ -221,7 +218,11 @@ body {
     overflow-y: auto;
     flex-shrink: 1;
     min-height: 0;
-    max-height: 50%;
+    /* 移除最大高度限制，允许历史记录占满剩余空间 */
+    /* max-height: 50%; */
+    user-select: text;
+    /* 允许选择文本 */
+    cursor: text;
 }
 
 /* 自定义滚动条 */
@@ -251,6 +252,9 @@ body {
     font-weight: 500;
     line-height: 1.4;
     text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+    user-select: text;
+    /* 允许选择文本 */
+    cursor: text;
 }
 
 /* 字幕初次出现的动画 - 弹性效果 */

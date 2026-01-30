@@ -6,6 +6,7 @@ mod audio;
 #[cfg(target_os = "windows")]
 mod audio_wasapi;
 mod config;
+mod history;
 mod online_asr;
 
 #[cfg(not(target_os = "windows"))]
@@ -15,16 +16,26 @@ use audio_wasapi::AudioCapture;
 use config::AppConfig;
 use config::ScannedModelFiles;
 use cpal::traits::{DeviceTrait, HostTrait};
+use history::{HistoryListItem, HistoryManager, HistorySession};
 use online_asr::{OnlineRecognizer, OnlineRecognizerConfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
+use std::time::{Duration, Instant};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder,
 };
+
+/// 辅助函数：处理被毒化的锁，恢复并返回锁的 guard
+fn recover_lock<'a, T>(result: Result<MutexGuard<'a, T>, PoisonError<MutexGuard<'a, T>>>) -> MutexGuard<'a, T> {
+    match result {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
 
 /// 应用状态
 pub struct AppState {
@@ -36,15 +47,21 @@ pub struct AppState {
     is_running: Mutex<bool>,
     /// 模型目录
     models_dir: PathBuf,
+    /// 历史记录管理器
+    history_manager: Mutex<HistoryManager>,
+    /// 是否启用历史记录保存
+    enable_history_save: Mutex<bool>,
 }
 
 impl AppState {
-    fn new(models_dir: PathBuf) -> Self {
+    fn new(models_dir: PathBuf, history_dir: PathBuf) -> Self {
         Self {
             config: Mutex::new(AppConfig::default()),
             audio_capture: Mutex::new(None),
             is_running: Mutex::new(false),
             models_dir,
+            history_manager: Mutex::new(HistoryManager::new(history_dir)),
+            enable_history_save: Mutex::new(true),
         }
     }
 }
@@ -324,6 +341,16 @@ async fn start_recognition(
         *is_running = true;
     }
 
+    // 开始新的历史记录会话
+    {
+        let enable_history = recover_lock(state.enable_history_save.lock());
+        if *enable_history {
+            let mut history_manager = recover_lock(state.history_manager.lock());
+            history_manager.start_session();
+            println!("历史记录会话已开始");
+        }
+    }
+
     // 在后台线程中运行识别
     let models_dir = state.models_dir.clone();
     let state_clone = Arc::clone(&state.inner());
@@ -376,6 +403,10 @@ async fn start_recognition(
                 // 模型加载完成
                 let _ = app_handle.emit("model_loading", serde_json::json!({"loading": false}));
                 let mut last_text = String::new();
+                
+                // 定时保存历史记录相关
+                let save_interval = Duration::from_secs(5); // 每5秒保存一次
+                let mut last_save_time = Instant::now();
 
                 // 循环处理音频
                 while let Ok(samples) = audio_rx.recv() {
@@ -402,6 +433,23 @@ async fn start_recognition(
                         // 发送最终结果
                         let event = SubtitleEvent::new(last_text.clone(), true);
                         let _ = app_handle.emit("subtitle", &event);
+
+                        // 保存到历史记录
+                        {
+                            let enable_history = recover_lock(state_clone.enable_history_save.lock());
+                            if *enable_history {
+                                let mut history_manager = recover_lock(state_clone.history_manager.lock());
+                                history_manager.add_subtitle(last_text.clone(), event.timestamp);
+                                
+                                // 检查是否需要定时保存（每5秒）
+                                if last_save_time.elapsed() >= save_interval {
+                                    if let Some(_path) = history_manager.save_current_session() {
+                                        // 静默保存，不打印日志
+                                    }
+                                    last_save_time = Instant::now();
+                                }
+                            }
+                        }
 
                         recognizer.reset();
                         last_text.clear();
@@ -442,6 +490,17 @@ async fn stop_recognition(state: State<'_, Arc<AppState>>) -> Result<(), String>
         let mut audio = state.audio_capture.lock().map_err(|e| e.to_string())?;
         if let Some(mut capture) = audio.take() {
             capture.stop();
+        }
+    }
+
+    // 结束并保存历史记录会话
+    {
+        let enable_history = recover_lock(state.enable_history_save.lock());
+        if *enable_history {
+            let mut history_manager = recover_lock(state.history_manager.lock());
+            if let Some(path) = history_manager.end_session() {
+                println!("历史记录已保存到: {:?}", path);
+            }
         }
     }
 
@@ -550,6 +609,109 @@ async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ========== 历史记录相关命令 ==========
+
+/// 获取历史记录存储目录
+#[tauri::command]
+async fn get_history_dir(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    let history_manager = recover_lock(state.history_manager.lock());
+    Ok(history_manager.get_history_dir().to_string_lossy().to_string())
+}
+
+/// 设置历史记录存储目录
+#[tauri::command]
+async fn set_history_dir(state: State<'_, Arc<AppState>>, dir: String) -> Result<(), String> {
+    let mut history_manager = recover_lock(state.history_manager.lock());
+    history_manager.set_history_dir(PathBuf::from(dir));
+    Ok(())
+}
+
+/// 设置是否启用历史记录保存
+#[tauri::command]
+async fn set_enable_history_save(state: State<'_, Arc<AppState>>, enable: bool) -> Result<(), String> {
+    let mut enable_history = recover_lock(state.enable_history_save.lock());
+    *enable_history = enable;
+    Ok(())
+}
+
+/// 获取是否启用历史记录保存
+#[tauri::command]
+async fn get_enable_history_save(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+    let enable_history = recover_lock(state.enable_history_save.lock());
+    Ok(*enable_history)
+}
+
+/// 获取历史记录列表
+#[tauri::command]
+async fn get_history_list(state: State<'_, Arc<AppState>>) -> Result<Vec<HistoryListItem>, String> {
+    let history_manager = recover_lock(state.history_manager.lock());
+    history_manager.list_history()
+}
+
+/// 获取历史记录详情
+#[tauri::command]
+async fn get_history_detail(state: State<'_, Arc<AppState>>, id: String) -> Result<HistorySession, String> {
+    let history_manager = recover_lock(state.history_manager.lock());
+    history_manager.get_history_detail(&id)
+}
+
+/// 删除历史记录
+#[tauri::command]
+async fn delete_history(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
+    let history_manager = recover_lock(state.history_manager.lock());
+    history_manager.delete_history(&id)
+}
+
+/// 搜索历史记录
+#[tauri::command]
+async fn search_history(state: State<'_, Arc<AppState>>, keyword: String) -> Result<Vec<HistoryListItem>, String> {
+    let history_manager = recover_lock(state.history_manager.lock());
+    history_manager.search_history(&keyword)
+}
+
+/// 清空所有历史记录
+#[tauri::command]
+async fn clear_all_history(state: State<'_, Arc<AppState>>) -> Result<usize, String> {
+    let history_manager = recover_lock(state.history_manager.lock());
+    history_manager.clear_all()
+}
+
+/// 打开历史记录目录
+#[tauri::command]
+async fn open_history_dir(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let dir = {
+        let history_manager = recover_lock(state.history_manager.lock());
+        history_manager.get_history_dir().clone()
+    };
+    
+    // 确保目录存在
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败: {}", e))?;
+    
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("无法打开目录: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("无法打开目录: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("无法打开目录: {}", e))?;
+    }
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -573,8 +735,14 @@ pub fn run() {
                     .join("models")
             };
 
+            // 获取历史记录目录：使用应用数据目录
+            let history_dir = app.path()
+                .app_data_dir()
+                .expect("Failed to get app data dir")
+                .join("history");
+
             // 创建应用状态
-            let state = Arc::new(AppState::new(models_dir));
+            let state = Arc::new(AppState::new(models_dir, history_dir));
             app.manage(state);
 
             // 创建托盘菜单
@@ -679,6 +847,17 @@ pub fn run() {
             show_main_window,
             get_style_path,
             open_style_editor,
+            // 历史记录相关命令
+            get_history_dir,
+            set_history_dir,
+            set_enable_history_save,
+            get_enable_history_save,
+            get_history_list,
+            get_history_detail,
+            delete_history,
+            search_history,
+            clear_all_history,
+            open_history_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -16,6 +16,7 @@
         "title": "Live Subtitles",
         "width": 800,
         "height": 200,
+        "minHeight": 1,
         "decorations": false,
         "transparent": true,
         "shadow": false,

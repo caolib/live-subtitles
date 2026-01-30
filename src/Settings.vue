@@ -21,9 +21,11 @@ import {
     InfoCircleOutlined,
     SyncOutlined,
     BorderOutlined,
-    FullscreenExitOutlined
+    FullscreenExitOutlined,
+    ExportOutlined
 } from "@ant-design/icons-vue";
 import { useSettingsStore } from "./stores/settings";
+import HistoryManager from "./components/HistoryManager.vue";
 
 // 窗口操作
 const appWindow = getCurrentWindow();
@@ -100,6 +102,12 @@ const currentModelAdvancedForm = ref({
 const loading = ref(false);
 const scanning = ref(false);
 
+// 代理认证折叠状态（默认折叠）
+const proxyAuthExpanded = ref(false);
+
+// 模型文件配置折叠状态（使用 ref 以支持双向绑定）
+const modelFilesExpanded = ref([]);
+
 // 当前选中的模型详情
 const currentModelDetails = computed(() => {
     return settingsStore.availableModels.find(m => m.id === settingsStore.currentModelId);
@@ -113,6 +121,10 @@ const aboutVisible = ref(false);
 
 // 音频设备加载状态
 const loadingAudioDevices = ref(false);
+
+// 历史记录相关
+const historyManagerRef = ref(null);
+const defaultHistoryDir = ref("");
 
 // 音频源类型选项
 const audioSourceTypeOptions = [
@@ -177,7 +189,7 @@ async function loadSystemFonts() {
             newOptions.sort((a, b) => a.label.localeCompare(b.label));
 
             fontFamilyOptions.value = [...fontFamilyOptions.value, ...newOptions];
-            message.success(`已加载 ${newOptions.length} 个系统字体`);
+            // message.success(`已加载 ${newOptions.length} 个系统字体`);
             console.log(`Loaded ${newOptions.length} system fonts`);
         } catch (e) {
             console.error("Failed to query local fonts:", e);
@@ -197,6 +209,11 @@ const checkingUpdate = ref(false);
 const downloading = ref(false);
 const downloadProgress = ref(0);
 
+// 历史记录目录显示（优先显示自定义路径，否则显示默认路径）
+const historyDirDisplay = computed(() => {
+    return settingsStore.historyDir || defaultHistoryDir.value || '(默认应用数据目录)';
+});
+
 // 检查当前模型配置是否完整
 const isModelComplete = computed(() => {
     return currentModelAdvancedForm.value.encoder &&
@@ -204,6 +221,16 @@ const isModelComplete = computed(() => {
         currentModelAdvancedForm.value.joiner &&
         currentModelAdvancedForm.value.tokens;
 });
+
+// 监听 isModelComplete 的变化，自动设置折叠状态
+watch(
+    () => isModelComplete.value,
+    (complete) => {
+        // 当配置完整时折叠，否则展开
+        modelFilesExpanded.value = complete ? [] : ['model-files'];
+    },
+    { immediate: true }
+);
 
 // 获取模型目录前缀
 const modelDirPrefix = computed(() => {
@@ -244,8 +271,73 @@ async function loadConfig() {
 
         // 加载当前模型的高级配置
         loadCurrentModelAdvancedConfig();
+
+        // 加载历史记录配置
+        await loadHistoryConfig();
     } catch (e) {
         console.error("Failed to load config:", e);
+    }
+}
+
+// 加载历史记录配置
+async function loadHistoryConfig() {
+    try {
+        // 获取默认历史记录目录
+        defaultHistoryDir.value = await invoke("get_history_dir");
+
+        // 同步启用状态到后端
+        await invoke("set_enable_history_save", { enable: settingsStore.enableHistorySave });
+
+        // 如果有自定义路径，同步到后端
+        if (settingsStore.historyDir) {
+            await invoke("set_history_dir", { dir: settingsStore.historyDir });
+        }
+    } catch (e) {
+        console.error("Failed to load history config:", e);
+    }
+}
+
+// 处理历史记录保存开关变化
+async function handleHistorySaveChange(checked) {
+    try {
+        await invoke("set_enable_history_save", { enable: checked });
+    } catch (e) {
+        console.error("Failed to set history save:", e);
+        message.error("设置失败: " + e);
+    }
+}
+
+// 选择历史记录存储目录
+async function selectHistoryDir() {
+    try {
+        const selected = await open({
+            directory: true,
+            multiple: false,
+            defaultPath: settingsStore.historyDir || defaultHistoryDir.value,
+        });
+        if (selected) {
+            settingsStore.historyDir = selected;
+            await invoke("set_history_dir", { dir: selected });
+            message.success("历史记录目录已更新");
+
+            // 刷新历史记录列表
+            if (historyManagerRef.value) {
+                historyManagerRef.value.refresh();
+            }
+        }
+    } catch (e) {
+        console.error("Failed to select history directory:", e);
+        message.error("选择目录失败: " + e);
+    }
+}
+
+// 打开历史记录目录
+async function openHistoryDir() {
+    try {
+        await invoke("open_history_dir");
+    } catch (e) {
+        console.error("Failed to open history directory:", e);
+        message.error("打开目录失败: " + e);
     }
 }
 
@@ -826,7 +918,7 @@ async function enumerateAudioDevices() {
     try {
         const devices = await invoke("enumerate_audio_devices");
         settingsStore.setAvailableAudioDevices(devices);
-        message.success(`已检测到 ${devices.length} 个音频设备`);
+        // message.success(`已检测到 ${devices.length} 个音频设备`);
     } catch (e) {
         message.error(`枚举音频设备失败: ${e}`);
         console.error("Failed to enumerate audio devices:", e);
@@ -1094,147 +1186,126 @@ onMounted(async () => {
                                 <a-input :value="currentModelDetails.model_dir" disabled />
                             </a-form-item>
 
-                            <a-form-item label="encoder">
-                                <a-input-group compact class="full-width-input-group">
-                                    <a-tooltip :title="currentModelAdvancedForm.encoder || '未配置'" placement="top">
-                                        <a-input :value="getDisplayFileName(currentModelAdvancedForm.encoder)"
-                                            @update:value="v => currentModelAdvancedForm.encoder = v.includes('\\') || v.includes('/') ? v : (modelDirPrefix + v)"
-                                            placeholder="encoder.onnx"
-                                            :status="currentModelAdvancedForm.encoder ? '' : 'error'" />
-                                    </a-tooltip>
-                                    <a-tooltip :title="currentModelAdvancedForm.encoder ? '已配置' : '未找到'">
-                                        <a-button :type="currentModelAdvancedForm.encoder ? 'default' : 'default'"
-                                            :danger="!currentModelAdvancedForm.encoder">
-                                            <template #icon>
-                                                <CheckCircleOutlined v-if="currentModelAdvancedForm.encoder"
-                                                    style="color: #52c41a" />
-                                                <CloseCircleOutlined v-else style="color: #ff4d4f" />
-                                            </template>
-                                        </a-button>
-                                    </a-tooltip>
-                                    <a-button @click="selectFile('encoder')" title="选择文件">
-                                        <template #icon>
-                                            <FolderOpenOutlined />
-                                        </template>
-                                    </a-button>
-                                </a-input-group>
-                            </a-form-item>
+                            <a-collapse v-model:active-key="modelFilesExpanded" :bordered="false">
+                                <a-collapse-panel key="model-files"
+                                    :header="`文件路径 ${isModelComplete ? '(已完整配置)' : '(配置不完整)'}`" style="padding: 0;">
+                                    <a-form-item label="encoder">
+                                        <a-input-group compact class="full-width-input-group">
+                                            <a-tooltip :title="currentModelAdvancedForm.encoder || '未配置'"
+                                                placement="top">
+                                                <a-input :value="getDisplayFileName(currentModelAdvancedForm.encoder)"
+                                                    @update:value="v => currentModelAdvancedForm.encoder = v.includes('\\') || v.includes('/') ? v : (modelDirPrefix + v)"
+                                                    placeholder="encoder.onnx"
+                                                    :status="currentModelAdvancedForm.encoder ? '' : 'error'" />
+                                            </a-tooltip>
+                                            <a-tooltip :title="currentModelAdvancedForm.encoder ? '已配置' : '未找到'">
+                                                <a-button
+                                                    :type="currentModelAdvancedForm.encoder ? 'default' : 'default'"
+                                                    :danger="!currentModelAdvancedForm.encoder">
+                                                    <template #icon>
+                                                        <CheckCircleOutlined v-if="currentModelAdvancedForm.encoder"
+                                                            style="color: #52c41a" />
+                                                        <CloseCircleOutlined v-else style="color: #ff4d4f" />
+                                                    </template>
+                                                </a-button>
+                                            </a-tooltip>
+                                            <a-button @click="selectFile('encoder')" title="选择文件">
+                                                <template #icon>
+                                                    <FolderOpenOutlined />
+                                                </template>
+                                            </a-button>
+                                        </a-input-group>
+                                    </a-form-item>
 
-                            <a-form-item label="decoder">
-                                <a-input-group compact class="full-width-input-group">
-                                    <a-tooltip :title="currentModelAdvancedForm.decoder || '未配置'" placement="top">
-                                        <a-input :value="getDisplayFileName(currentModelAdvancedForm.decoder)"
-                                            @update:value="v => currentModelAdvancedForm.decoder = v.includes('\\') || v.includes('/') ? v : (modelDirPrefix + v)"
-                                            placeholder="decoder.onnx"
-                                            :status="currentModelAdvancedForm.decoder ? '' : 'error'" />
-                                    </a-tooltip>
-                                    <a-tooltip :title="currentModelAdvancedForm.decoder ? '已配置' : '未找到'">
-                                        <a-button :type="currentModelAdvancedForm.decoder ? 'default' : 'default'"
-                                            :danger="!currentModelAdvancedForm.decoder">
-                                            <template #icon>
-                                                <CheckCircleOutlined v-if="currentModelAdvancedForm.decoder"
-                                                    style="color: #52c41a" />
-                                                <CloseCircleOutlined v-else style="color: #ff4d4f" />
-                                            </template>
-                                        </a-button>
-                                    </a-tooltip>
-                                    <a-button @click="selectFile('decoder')" title="选择文件">
-                                        <template #icon>
-                                            <FolderOpenOutlined />
-                                        </template>
-                                    </a-button>
-                                </a-input-group>
-                            </a-form-item>
+                                    <a-form-item label="decoder">
+                                        <a-input-group compact class="full-width-input-group">
+                                            <a-tooltip :title="currentModelAdvancedForm.decoder || '未配置'"
+                                                placement="top">
+                                                <a-input :value="getDisplayFileName(currentModelAdvancedForm.decoder)"
+                                                    @update:value="v => currentModelAdvancedForm.decoder = v.includes('\\') || v.includes('/') ? v : (modelDirPrefix + v)"
+                                                    placeholder="decoder.onnx"
+                                                    :status="currentModelAdvancedForm.decoder ? '' : 'error'" />
+                                            </a-tooltip>
+                                            <a-tooltip :title="currentModelAdvancedForm.decoder ? '已配置' : '未找到'">
+                                                <a-button
+                                                    :type="currentModelAdvancedForm.decoder ? 'default' : 'default'"
+                                                    :danger="!currentModelAdvancedForm.decoder">
+                                                    <template #icon>
+                                                        <CheckCircleOutlined v-if="currentModelAdvancedForm.decoder"
+                                                            style="color: #52c41a" />
+                                                        <CloseCircleOutlined v-else style="color: #ff4d4f" />
+                                                    </template>
+                                                </a-button>
+                                            </a-tooltip>
+                                            <a-button @click="selectFile('decoder')" title="选择文件">
+                                                <template #icon>
+                                                    <FolderOpenOutlined />
+                                                </template>
+                                            </a-button>
+                                        </a-input-group>
+                                    </a-form-item>
 
-                            <a-form-item label="joiner">
-                                <a-input-group compact class="full-width-input-group">
-                                    <a-tooltip :title="currentModelAdvancedForm.joiner || '未配置'" placement="top">
-                                        <a-input :value="getDisplayFileName(currentModelAdvancedForm.joiner)"
-                                            @update:value="v => currentModelAdvancedForm.joiner = v.includes('\\') || v.includes('/') ? v : (modelDirPrefix + v)"
-                                            placeholder="joiner.onnx"
-                                            :status="currentModelAdvancedForm.joiner ? '' : 'error'" />
-                                    </a-tooltip>
-                                    <a-tooltip :title="currentModelAdvancedForm.joiner ? '已配置' : '未找到'">
-                                        <a-button :type="currentModelAdvancedForm.joiner ? 'default' : 'default'"
-                                            :danger="!currentModelAdvancedForm.joiner">
-                                            <template #icon>
-                                                <CheckCircleOutlined v-if="currentModelAdvancedForm.joiner"
-                                                    style="color: #52c41a" />
-                                                <CloseCircleOutlined v-else style="color: #ff4d4f" />
-                                            </template>
-                                        </a-button>
-                                    </a-tooltip>
-                                    <a-button @click="selectFile('joiner')" title="选择文件">
-                                        <template #icon>
-                                            <FolderOpenOutlined />
-                                        </template>
-                                    </a-button>
-                                </a-input-group>
-                            </a-form-item>
+                                    <a-form-item label="joiner">
+                                        <a-input-group compact class="full-width-input-group">
+                                            <a-tooltip :title="currentModelAdvancedForm.joiner || '未配置'"
+                                                placement="top">
+                                                <a-input :value="getDisplayFileName(currentModelAdvancedForm.joiner)"
+                                                    @update:value="v => currentModelAdvancedForm.joiner = v.includes('\\') || v.includes('/') ? v : (modelDirPrefix + v)"
+                                                    placeholder="joiner.onnx"
+                                                    :status="currentModelAdvancedForm.joiner ? '' : 'error'" />
+                                            </a-tooltip>
+                                            <a-tooltip :title="currentModelAdvancedForm.joiner ? '已配置' : '未找到'">
+                                                <a-button
+                                                    :type="currentModelAdvancedForm.joiner ? 'default' : 'default'"
+                                                    :danger="!currentModelAdvancedForm.joiner">
+                                                    <template #icon>
+                                                        <CheckCircleOutlined v-if="currentModelAdvancedForm.joiner"
+                                                            style="color: #52c41a" />
+                                                        <CloseCircleOutlined v-else style="color: #ff4d4f" />
+                                                    </template>
+                                                </a-button>
+                                            </a-tooltip>
+                                            <a-button @click="selectFile('joiner')" title="选择文件">
+                                                <template #icon>
+                                                    <FolderOpenOutlined />
+                                                </template>
+                                            </a-button>
+                                        </a-input-group>
+                                    </a-form-item>
 
-                            <a-form-item label="tokens">
-                                <a-input-group compact class="full-width-input-group">
-                                    <a-tooltip :title="currentModelAdvancedForm.tokens || '未配置'" placement="top">
-                                        <a-input :value="getDisplayFileName(currentModelAdvancedForm.tokens)"
-                                            @update:value="v => currentModelAdvancedForm.tokens = v.includes('\\') || v.includes('/') ? v : (modelDirPrefix + v)"
-                                            placeholder="tokens.txt"
-                                            :status="currentModelAdvancedForm.tokens ? '' : 'error'" />
-                                    </a-tooltip>
-                                    <a-tooltip :title="currentModelAdvancedForm.tokens ? '已配置' : '未找到'">
-                                        <a-button :type="currentModelAdvancedForm.tokens ? 'default' : 'default'"
-                                            :danger="!currentModelAdvancedForm.tokens">
-                                            <template #icon>
-                                                <CheckCircleOutlined v-if="currentModelAdvancedForm.tokens"
-                                                    style="color: #52c41a" />
-                                                <CloseCircleOutlined v-else style="color: #ff4d4f" />
-                                            </template>
-                                        </a-button>
-                                    </a-tooltip>
-                                    <a-button @click="selectFile('tokens')" title="选择文件">
-                                        <template #icon>
-                                            <FolderOpenOutlined />
-                                        </template>
-                                    </a-button>
-                                </a-input-group>
-                            </a-form-item>
+                                    <a-form-item label="tokens">
+                                        <a-input-group compact class="full-width-input-group">
+                                            <a-tooltip :title="currentModelAdvancedForm.tokens || '未配置'"
+                                                placement="top">
+                                                <a-input :value="getDisplayFileName(currentModelAdvancedForm.tokens)"
+                                                    @update:value="v => currentModelAdvancedForm.tokens = v.includes('\\') || v.includes('/') ? v : (modelDirPrefix + v)"
+                                                    placeholder="tokens.txt"
+                                                    :status="currentModelAdvancedForm.tokens ? '' : 'error'" />
+                                            </a-tooltip>
+                                            <a-tooltip :title="currentModelAdvancedForm.tokens ? '已配置' : '未找到'">
+                                                <a-button
+                                                    :type="currentModelAdvancedForm.tokens ? 'default' : 'default'"
+                                                    :danger="!currentModelAdvancedForm.tokens">
+                                                    <template #icon>
+                                                        <CheckCircleOutlined v-if="currentModelAdvancedForm.tokens"
+                                                            style="color: #52c41a" />
+                                                        <CloseCircleOutlined v-else style="color: #ff4d4f" />
+                                                    </template>
+                                                </a-button>
+                                            </a-tooltip>
+                                            <a-button @click="selectFile('tokens')" title="选择文件">
+                                                <template #icon>
+                                                    <FolderOpenOutlined />
+                                                </template>
+                                            </a-button>
+                                        </a-input-group>
+                                    </a-form-item>
+                                </a-collapse-panel>
+                            </a-collapse>
 
                             <div class="model-status-summary">
                                 <a-alert v-if="!isModelComplete" type="warning" style="width: fit-content;"
                                     message='模型配置不完整，请检查缺失的文件' show-icon />
-                            </div>
-                        </div>
-                    </a-form>
-                </a-card>
-
-                <a-card title="显示设置" class="section-card">
-                    <template #extra>
-                        <a-typography-text type="secondary">配置字幕显示相关选项</a-typography-text>
-                    </template>
-
-                    <a-form layout="horizontal" class="aligned-form">
-                        <div class="form-item-with-hint">
-                            <a-form-item label="显示历史字幕">
-                                <a-switch v-model:checked="settingsStore.showHistory" />
-                            </a-form-item>
-                            <div class="full-width-hint">
-                                <a-typography-text type="secondary" class="field-hint">
-                                    启用后将在当前字幕上方显示历史识别内容
-                                </a-typography-text>
-                            </div>
-                        </div>
-
-                        <div class="form-item-with-hint">
-                            <a-form-item label="历史最大长度">
-                                <div class="inline-control">
-                                    <a-input-number v-model:value="settingsStore.maxHistoryLength" :min="0"
-                                        placeholder="0 表示无限制" style="width: 150px" />
-                                    <span class="input-suffix">字符</span>
-                                </div>
-                            </a-form-item>
-                            <div class="full-width-hint">
-                                <a-typography-text type="secondary" class="field-hint">
-                                    设置历史字幕文本的最大显示长度，0 表示无限制
-                                </a-typography-text>
                             </div>
                         </div>
                     </a-form>
@@ -1297,7 +1368,7 @@ onMounted(async () => {
                     </a-form>
                 </a-card>
 
-                <a-card title="网络设置" class="section-card">
+                <a-card title="代理设置" class="section-card">
                     <template #extra>
                         <a-typography-text type="secondary">配置网络代理选项</a-typography-text>
                     </template>
@@ -1320,26 +1391,26 @@ onMounted(async () => {
                         </a-form-item>
 
                         <div v-if="settingsStore.useCustomProxy">
-                            <a-divider orientation="left">
-                                <span style="font-size: 13px;">代理认证</span>
-                            </a-divider>
+                            <a-collapse v-model:active-key="proxyAuthExpanded" :bordered="false">
+                                <a-collapse-panel key="proxy-auth" header="代理认证" style="padding: 0;">
+                                    <a-form-item label="用户名">
+                                        <a-input v-model:value="settingsStore.proxyUsername"
+                                            placeholder="代理服务器用户名（如需认证）" style="width: 100%" />
+                                    </a-form-item>
 
-                            <a-form-item label="用户名">
-                                <a-input v-model:value="settingsStore.proxyUsername" placeholder="代理服务器用户名（如需认证）"
-                                    style="width: 100%" />
-                            </a-form-item>
-
-                            <a-form-item label="密码">
-                                <a-input-password v-model:value="settingsStore.proxyPassword"
-                                    placeholder="代理服务器密码（如需认证）" style="width: 100%" />
-                            </a-form-item>
+                                    <a-form-item label="密码">
+                                        <a-input-password v-model:value="settingsStore.proxyPassword"
+                                            placeholder="代理服务器密码（如需认证）" style="width: 100%" />
+                                    </a-form-item>
+                                </a-collapse-panel>
+                            </a-collapse>
                         </div>
                     </a-form>
                 </a-card>
 
                 <a-card title="外观设置" class="section-card">
                     <template #extra>
-                        <a-typography-text type="secondary">配置应用外观主题</a-typography-text>
+                        <a-typography-text type="secondary">配置应用外观主题和显示选项</a-typography-text>
                     </template>
 
                     <a-form layout="horizontal" class="aligned-form">
@@ -1347,6 +1418,34 @@ onMounted(async () => {
                             <a-radio-group v-model:value="settingsStore.themeMode" :options="themeOptions"
                                 option-type="button" button-style="solid" />
                         </a-form-item>
+
+                        <a-divider style="margin: 12px 0;">显示选项</a-divider>
+
+                        <div class="form-item-with-hint">
+                            <a-form-item label="显示历史字幕">
+                                <a-switch v-model:checked="settingsStore.showHistory" />
+                            </a-form-item>
+                            <div class="full-width-hint">
+                                <a-typography-text type="secondary" class="field-hint">
+                                    启用后将在当前字幕上方显示历史识别内容
+                                </a-typography-text>
+                            </div>
+                        </div>
+
+                        <div class="form-item-with-hint">
+                            <a-form-item label="历史最大长度">
+                                <div class="inline-control">
+                                    <a-input-number v-model:value="settingsStore.maxHistoryLength" :min="0"
+                                        placeholder="0 表示无限制" style="width: 150px" />
+                                    <span class="input-suffix">字符</span>
+                                </div>
+                            </a-form-item>
+                            <div class="full-width-hint">
+                                <a-typography-text type="secondary" class="field-hint">
+                                    设置历史字幕文本的最大显示长度，0 表示无限制
+                                </a-typography-text>
+                            </div>
+                        </div>
 
                         <a-divider style="margin: 12px 0;">字幕样式</a-divider>
 
@@ -1403,7 +1502,7 @@ onMounted(async () => {
                                             title="点击选择颜色" />
                                     </div>
                                     <span style="font-family: monospace;">{{ settingsStore.subtitleBackgroundColor
-                                        }}</span>
+                                    }}</span>
                                 </div>
                             </a-form-item>
                         </div>
@@ -1433,6 +1532,53 @@ onMounted(async () => {
                             </div>
                         </div>
                     </a-form>
+                </a-card>
+
+                <a-card title="历史记录" class="section-card">
+                    <template #extra>
+                        <a-typography-text type="secondary">管理识别历史记录</a-typography-text>
+                    </template>
+
+                    <a-form layout="horizontal" class="aligned-form">
+                        <div class="form-item-with-hint">
+                            <a-form-item label="保存历史记录">
+                                <a-switch v-model:checked="settingsStore.enableHistorySave"
+                                    @change="handleHistorySaveChange" />
+                            </a-form-item>
+                            <div class="full-width-hint">
+                                <a-typography-text type="secondary" class="field-hint">
+                                    启用后，每次识别会话结束时会自动保存识别内容到本地文件
+                                </a-typography-text>
+                            </div>
+                        </div>
+
+                        <div class="form-item-with-hint" v-if="settingsStore.enableHistorySave">
+                            <a-form-item label="存储目录">
+                                <a-input-group compact class="full-width-input-group">
+                                    <a-input v-model:value="historyDirDisplay" placeholder="使用默认应用数据目录" disabled />
+                                    <a-button @click="selectHistoryDir">
+                                        <template #icon>
+                                            <FolderOpenOutlined />
+                                        </template>
+                                    </a-button>
+                                    <a-button @click="openHistoryDir" title="打开目录">
+                                        <template #icon>
+                                            <ExportOutlined />
+                                        </template>
+                                    </a-button>
+                                </a-input-group>
+                            </a-form-item>
+                            <div class="full-width-hint">
+                                <a-typography-text type="secondary" class="field-hint">
+                                    历史记录保存目录，留空使用默认应用数据目录
+                                </a-typography-text>
+                            </div>
+                        </div>
+                    </a-form>
+
+                    <a-divider style="margin: 16px 0;">历史记录列表</a-divider>
+
+                    <HistoryManager ref="historyManagerRef" />
                 </a-card>
 
                 <!-- 底部留白，防止被固定按钮遮挡 -->
@@ -1615,6 +1761,10 @@ textarea {
 
 .settings-wrapper.dark-mode {
     background-color: #141414;
+}
+
+.ant-card {
+    margin-bottom: 10px;
 }
 
 /* 自定义标题栏 */

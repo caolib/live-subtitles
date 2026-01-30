@@ -11,6 +11,10 @@ export const useSettingsStore = defineStore('settings', () => {
     const maxHistoryLength = ref(0) // 0 表示无限制
     const lowercaseSubtitle = ref(true) // 英文字幕默认小写
 
+    // ========== 历史记录设置 ==========
+    const enableHistorySave = ref(true) // 是否启用历史记录保存
+    const historyDir = ref('') // 自定义历史记录保存路径，空字符串表示使用默认路径
+
     // ========== 主题设置 ==========
     // 'light' | 'dark' | 'system'
     const themeMode = ref('system')
@@ -75,6 +79,10 @@ export const useSettingsStore = defineStore('settings', () => {
             showHistory: showHistory.value,
             maxHistoryLength: maxHistoryLength.value,
         },
+        history: {
+            enableHistorySave: enableHistorySave.value,
+            historyDir: historyDir.value,
+        },
         appearance: {
             themeMode: themeMode.value,
             subtitleFontSize: subtitleFontSize.value,
@@ -114,6 +122,18 @@ export const useSettingsStore = defineStore('settings', () => {
         }
         if (settings.maxHistoryLength !== undefined) {
             maxHistoryLength.value = settings.maxHistoryLength
+        }
+    }
+
+    /**
+     * 更新历史记录设置
+     */
+    function updateHistorySettings(settings) {
+        if (settings.enableHistorySave !== undefined) {
+            enableHistorySave.value = settings.enableHistorySave
+        }
+        if (settings.historyDir !== undefined) {
+            historyDir.value = settings.historyDir
         }
     }
 
@@ -294,6 +314,11 @@ export const useSettingsStore = defineStore('settings', () => {
                 updateDisplaySettings(data.settings.display)
             }
 
+            // 导入历史记录设置
+            if (data.settings.history) {
+                updateHistorySettings(data.settings.history)
+            }
+
             // 导入外观设置
             if (data.settings.appearance) {
                 updateAppearanceSettings(data.settings.appearance)
@@ -331,6 +356,8 @@ export const useSettingsStore = defineStore('settings', () => {
     function resetToDefaults() {
         showHistory.value = true
         maxHistoryLength.value = 0
+        enableHistorySave.value = true
+        historyDir.value = ''
         themeMode.value = 'system'
         subtitleFontSize.value = 20
         subtitleFontFamily.value = ''
@@ -357,6 +384,8 @@ export const useSettingsStore = defineStore('settings', () => {
         showHistory,
         maxHistoryLength,
         lowercaseSubtitle,
+        enableHistorySave,
+        historyDir,
         themeMode,
         subtitleFontSize,
         subtitleFontFamily,
@@ -383,6 +412,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
         // Actions
         updateDisplaySettings,
+        updateHistorySettings,
         updateAppearanceSettings,
         updateWindowSettings,
         updateNetworkSettings,
@@ -407,6 +437,8 @@ export const useSettingsStore = defineStore('settings', () => {
             'showHistory',
             'maxHistoryLength',
             'lowercaseSubtitle',
+            'enableHistorySave',
+            'historyDir',
             'themeMode',
             'subtitleFontSize',
             'subtitleFontFamily',
