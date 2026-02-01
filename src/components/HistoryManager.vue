@@ -349,7 +349,7 @@ defineExpose({
 
 .history-item {
     padding: 12px;
-    border: 1px solid #e8e8e8;
+    border: 1px solid #474747;
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.2s;
@@ -368,8 +368,7 @@ defineExpose({
 }
 
 .history-date {
-    font-weight: 500;
-    color: #333;
+    color: #828282;
 }
 
 .history-duration {
@@ -378,7 +377,6 @@ defineExpose({
 }
 
 .history-preview {
-    color: #666;
     font-size: 13px;
     line-height: 1.5;
     overflow: hidden;

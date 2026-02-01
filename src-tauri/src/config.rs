@@ -252,10 +252,48 @@ impl Default for AudioSourceType {
     }
 }
 
+/// ASR 引擎类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AsrEngineType {
+    /// 本地 Sherpa-ONNX 模型（需要下载模型）
+    SherpaOnnx,
+    /// Windows 内置语音识别（免费，需要网络）
+    #[cfg(target_os = "windows")]
+    WindowsSpeech,
+}
+
+impl Default for AsrEngineType {
+    fn default() -> Self {
+        AsrEngineType::SherpaOnnx
+    }
+}
+
+/// Windows 语音识别语言配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowsSpeechLang {
+    /// 语言标签（如 "zh-CN", "en-US"）
+    pub language_tag: String,
+    /// 语言显示名称
+    pub display_name: String,
+}
+
+impl Default for WindowsSpeechLang {
+    fn default() -> Self {
+        Self {
+            language_tag: "zh-CN".to_string(),
+            display_name: "中文（中国）".to_string(),
+        }
+    }
+}
+
 /// 应用配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    /// 当前使用的模型 ID
+    /// 当前使用的 ASR 引擎
+    #[serde(default)]
+    pub asr_engine: AsrEngineType,
+    /// 当前使用的模型 ID（用于 SherpaOnnx 引擎）
     pub current_model_id: String,
     /// 可用的 ASR 模型列表
     pub models: Vec<AsrModelConfig>,
@@ -265,11 +303,15 @@ pub struct AppConfig {
     /// 音频设备 ID（空字符串表示使用默认设备）
     #[serde(default)]
     pub audio_device_id: String,
+    /// Windows 语音识别语言设置
+    #[serde(default)]
+    pub windows_speech_language: WindowsSpeechLang,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            asr_engine: AsrEngineType::default(),
             current_model_id: "default".to_string(),
             models: vec![AsrModelConfig {
                 id: "default".to_string(),
@@ -287,6 +329,7 @@ impl Default for AppConfig {
             }],
             audio_source_type: AudioSourceType::default(),
             audio_device_id: String::new(), // 空字符串表示使用默认设备
+            windows_speech_language: WindowsSpeechLang::default(),
         }
     }
 }

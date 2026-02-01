@@ -108,6 +108,104 @@ const proxyAuthExpanded = ref(false);
 // 模型文件配置折叠状态（使用 ref 以支持双向绑定）
 const modelFilesExpanded = ref([]);
 
+// Windows 语音识别相关
+const windowsSpeechAvailable = ref(false);
+const windowsSpeechPermission = ref(false);
+const windowsSpeechLanguages = ref([]);
+const checkingWindowsSpeech = ref(false);
+
+// Windows 语音语言选项（计算属性）
+const windowsSpeechLanguageOptions = computed(() => {
+    return windowsSpeechLanguages.value.map(lang => {
+        // 提供常用语言的中文名称
+        const langNames = {
+            'zh-CN': '中文（简体）',
+            'zh-TW': '中文（繁体）',
+            'zh-HK': '中文（香港）',
+            'en-US': '英语（美国）',
+            'en-GB': '英语（英国）',
+            'ja-JP': '日语',
+            'ko-KR': '韩语',
+            'de-DE': '德语',
+            'fr-FR': '法语',
+            'es-ES': '西班牙语',
+            'it-IT': '意大利语',
+            'pt-BR': '葡萄牙语（巴西）',
+            'ru-RU': '俄语',
+        };
+        return {
+            value: lang,
+            label: langNames[lang] || lang,
+        };
+    });
+});
+
+// 语言搜索过滤
+function filterLanguageOption(input, option) {
+    return option.label.toLowerCase().includes(input.toLowerCase()) ||
+        option.value.toLowerCase().includes(input.toLowerCase());
+}
+
+// 检查 Windows 语音识别状态
+async function checkWindowsSpeechStatus() {
+    checkingWindowsSpeech.value = true;
+    try {
+        windowsSpeechAvailable.value = await invoke("is_windows_speech_available");
+        if (windowsSpeechAvailable.value) {
+            windowsSpeechPermission.value = await invoke("check_windows_speech_permission");
+            windowsSpeechLanguages.value = await invoke("get_windows_speech_languages");
+        }
+    } catch (e) {
+        console.error("Failed to check Windows speech status:", e);
+        windowsSpeechAvailable.value = false;
+    } finally {
+        checkingWindowsSpeech.value = false;
+    }
+}
+
+// 刷新 Windows 语音状态
+async function refreshWindowsSpeechStatus() {
+    await checkWindowsSpeechStatus();
+    message.success("已刷新 Windows 语音识别状态");
+}
+
+// 打开 Windows 语音设置
+async function openWindowsSpeechSettings() {
+    // 打开 Windows 设置中的语音隐私页面
+    try {
+        const { open } = await import("@tauri-apps/plugin-opener");
+        await open("ms-settings:privacy-speech");
+    } catch (e) {
+        console.error("Failed to open settings:", e);
+        // 备用方案：使用 shell 命令
+        message.info("请手动打开：设置 → 隐私与安全性 → 语音，并启用「在线语音识别」");
+    }
+}
+
+// ASR 引擎切换处理
+async function onAsrEngineChange(e) {
+    const engine = e.target.value;
+    console.log("ASR engine changed to:", engine);
+
+    if (engine === 'windowsspeech') {
+        // 切换到 Windows 语音时检查状态
+        await checkWindowsSpeechStatus();
+        if (!windowsSpeechAvailable.value) {
+            message.error("Windows 语音识别在此系统上不可用");
+            settingsStore.asrEngine = 'sherpaonnx';
+            return;
+        }
+        if (!windowsSpeechPermission.value) {
+            message.warning({
+                content: '请在系统设置中启用"在线语音识别"，然后点击"刷新状态"',
+                duration: 5,
+            });
+            // 自动打开设置
+            openWindowsSpeechSettings();
+        }
+    }
+}
+
 // 当前选中的模型详情
 const currentModelDetails = computed(() => {
     return settingsStore.availableModels.find(m => m.id === settingsStore.currentModelId);
@@ -167,37 +265,70 @@ const fontFamilyArray = computed({
 
 // 加载系统字体
 async function loadSystemFonts() {
-    if ('queryLocalFonts' in window) {
-        try {
-            message.loading("正在加载系统字体...", 1);
-            const fonts = await window.queryLocalFonts();
+    try {
+        message.loading("正在加载系统字体...", 1);
+
+        // 优先使用 Tauri 命令获取系统字体
+        const fonts = await invoke('get_system_fonts');
+
+        if (fonts && fonts.length > 0) {
             const fontFamilies = new Set(fontFamilyOptions.value.map(o => o.value));
 
             // 收集系统字体
+            const newOptions = [];
+            for (const fontFamily of fonts) {
+                // 规范化字体名称用于比较
+                const normalizedValue = fontFamily.includes(' ') ? `'${fontFamily}'` : fontFamily;
+                if (!fontFamilies.has(fontFamily) && !fontFamilies.has(normalizedValue)) {
+                    fontFamilies.add(normalizedValue);
+                    newOptions.push({
+                        label: fontFamily,
+                        value: normalizedValue
+                    });
+                }
+            }
+
+            fontFamilyOptions.value = [...fontFamilyOptions.value, ...newOptions];
+            console.log(`Loaded ${newOptions.length} system fonts via Tauri`);
+        } else {
+            // 如果 Tauri 命令返回空，尝试使用 Web API 作为后备
+            await loadSystemFontsViaWebAPI();
+        }
+    } catch (e) {
+        console.warn("Failed to load fonts via Tauri:", e);
+        // 尝试使用 Web API 作为后备
+        await loadSystemFontsViaWebAPI();
+    }
+}
+
+// 使用 Web API 加载系统字体（后备方案）
+async function loadSystemFontsViaWebAPI() {
+    if ('queryLocalFonts' in window) {
+        try {
+            const fonts = await window.queryLocalFonts();
+            const fontFamilies = new Set(fontFamilyOptions.value.map(o => o.value));
+
             const newOptions = [];
             for (const font of fonts) {
                 if (!fontFamilies.has(font.family)) {
                     fontFamilies.add(font.family);
                     newOptions.push({
-                        label: font.family, // Keep label simple
-                        value: font.family.includes(' ') ? `'${font.family}'` : font.family // Quote if needed
+                        label: font.family,
+                        value: font.family.includes(' ') ? `'${font.family}'` : font.family
                     });
                 }
             }
 
-            // 排序
             newOptions.sort((a, b) => a.label.localeCompare(b.label));
-
             fontFamilyOptions.value = [...fontFamilyOptions.value, ...newOptions];
-            // message.success(`已加载 ${newOptions.length} 个系统字体`);
-            console.log(`Loaded ${newOptions.length} system fonts`);
+            console.log(`Loaded ${newOptions.length} system fonts via Web API`);
         } catch (e) {
-            console.error("Failed to query local fonts:", e);
-            message.error("加载系统字体失败，请手动输入");
+            console.error("Failed to query local fonts via Web API:", e);
+            message.warning("加载系统字体失败，请手动输入字体名称");
         }
     } else {
-        console.warn("window.queryLocalFonts is not supported in this environment");
-        message.warning("当前环境不支持自动加载系统字体");
+        console.warn("Neither Tauri nor Web API font loading is available");
+        message.warning("无法自动加载系统字体，请手动输入字体名称");
     }
 }
 
@@ -1043,6 +1174,9 @@ onMounted(async () => {
     loadConfig();
     await fetchAppVersion();
 
+    // 检查 Windows 语音识别状态
+    await checkWindowsSpeechStatus();
+
     // 调试：显示从 localStorage 加载的音频配置
     console.log('[Audio] Loaded audio config from store:', {
         audioSourceType: settingsStore.audioSourceType,
@@ -1089,7 +1223,101 @@ onMounted(async () => {
 
             <div class="settings-container">
 
-                <a-card title="模型配置" class="section-card">
+                <!-- ASR 引擎选择 -->
+                <a-card title="语音识别引擎" class="section-card">
+                    <template #extra>
+                        <a-typography-text type="secondary">选择语音转文字引擎</a-typography-text>
+                    </template>
+
+                    <a-form layout="horizontal" class="aligned-form">
+                        <div class="form-item-with-hint">
+                            <a-form-item label="识别模型">
+                                <a-radio-group v-model:value="settingsStore.asrEngine" button-style="solid"
+                                    @change="onAsrEngineChange">
+                                    <a-radio-button value="sherpaonnx">
+                                        🔧 本地模型
+                                    </a-radio-button>
+                                    <a-radio-button value="windowsspeech" :disabled="!windowsSpeechAvailable">
+                                        🪟 Windows 语音
+                                        <span v-if="!windowsSpeechAvailable" style="font-size: 10px; color: #ff4d4f;">
+                                            (不可用)
+                                        </span>
+                                    </a-radio-button>
+                                </a-radio-group>
+                            </a-form-item>
+                            <div class="full-width-hint">
+                                <a-typography-text type="secondary" class="field-hint">
+                                    <template v-if="settingsStore.asrEngine === 'sherpaonnx'">
+                                        使用 Sherpa-ONNX 本地模型，需要下载模型文件，完全离线运行，支持系统音频和麦克风
+                                    </template>
+                                    <template v-else>
+                                        使用 Windows 内置语音识别，免费且无需下载模型，但需要网络连接
+                                    </template>
+                                </a-typography-text>
+                            </div>
+                        </div>
+
+                        <!-- Windows 语音识别设置 -->
+                        <template v-if="settingsStore.asrEngine === 'windowsspeech'">
+                            <a-divider orientation="left" orientation-margin="0">
+                                <span class="divider-title">Windows 语音设置</span>
+                            </a-divider>
+
+                            <!-- 重要限制提示 -->
+                            <a-alert type="warning" show-icon style="margin-bottom: 16px;">
+                                <template #message>
+                                    <div>
+                                        <strong>⚠️ 重要限制：</strong>Windows
+                                        语音识别<strong>只支持麦克风输入</strong>，无法识别系统音频（如视频/音乐播放声音）。
+                                        <br />
+                                        如需识别系统音频，请使用<strong>本地模型</strong>引擎。
+                                    </div>
+                                </template>
+                            </a-alert>
+
+                            <!-- 权限状态提示 -->
+                            <a-alert v-if="!windowsSpeechPermission" type="error" show-icon
+                                style="margin-bottom: 16px;">
+                                <template #message>
+                                    <div>
+                                        ❌ 在线语音识别未启用。请在
+                                        <a href="#" @click.prevent="openWindowsSpeechSettings">系统设置 → 隐私与安全性 →
+                                            语音</a>
+                                        中开启"在线语音识别"。
+                                    </div>
+                                </template>
+                            </a-alert>
+
+                            <a-alert v-else type="success" show-icon style="margin-bottom: 16px;">
+                                <template #message>
+                                    ✓ Windows 语音识别权限已启用（请对着麦克风说话）
+                                </template>
+                            </a-alert>
+
+                            <div class="form-item-with-hint">
+                                <a-form-item label="识别语言">
+                                    <a-select v-model:value="settingsStore.windowsSpeechLanguage" style="width: 100%"
+                                        placeholder="选择识别语言" :options="windowsSpeechLanguageOptions" show-search
+                                        :filter-option="filterLanguageOption" />
+                                </a-form-item>
+                                <div class="full-width-hint">
+                                    <a-typography-text type="secondary" class="field-hint">
+                                        已检测到 {{ windowsSpeechLanguages.length }} 种支持的语言
+                                    </a-typography-text>
+                                </div>
+                            </div>
+
+                            <a-button type="link" @click="refreshWindowsSpeechStatus" :loading="checkingWindowsSpeech">
+                                <template #icon>
+                                    <ReloadOutlined />
+                                </template>
+                                刷新状态
+                            </a-button>
+                        </template>
+                    </a-form>
+                </a-card>
+
+                <a-card v-if="settingsStore.asrEngine === 'sherpaonnx'" title="模型配置" class="section-card">
                     <template #extra>
                         <a-typography-text type="secondary">配置 ASR 语音识别模型</a-typography-text>
                     </template>
@@ -1368,46 +1596,6 @@ onMounted(async () => {
                     </a-form>
                 </a-card>
 
-                <a-card title="代理设置" class="section-card">
-                    <template #extra>
-                        <a-typography-text type="secondary">配置网络代理选项</a-typography-text>
-                    </template>
-
-                    <a-form layout="horizontal" class="aligned-form">
-                        <div class="form-item-with-hint">
-                            <a-form-item label="使用自定义代理">
-                                <a-switch v-model:checked="settingsStore.useCustomProxy" />
-                            </a-form-item>
-                            <div class="full-width-hint">
-                                <a-typography-text type="secondary" class="field-hint">
-                                    启用后将使用自定义代理地址进行网络请求（检查更新、下载安装包等）
-                                </a-typography-text>
-                            </div>
-                        </div>
-
-                        <a-form-item label="代理地址" v-if="settingsStore.useCustomProxy">
-                            <a-input v-model:value="settingsStore.proxyUrl" placeholder="例如: http://localhost:7890"
-                                style="width: 100%" />
-                        </a-form-item>
-
-                        <div v-if="settingsStore.useCustomProxy">
-                            <a-collapse v-model:active-key="proxyAuthExpanded" :bordered="false">
-                                <a-collapse-panel key="proxy-auth" header="代理认证" style="padding: 0;">
-                                    <a-form-item label="用户名">
-                                        <a-input v-model:value="settingsStore.proxyUsername"
-                                            placeholder="代理服务器用户名（如需认证）" style="width: 100%" />
-                                    </a-form-item>
-
-                                    <a-form-item label="密码">
-                                        <a-input-password v-model:value="settingsStore.proxyPassword"
-                                            placeholder="代理服务器密码（如需认证）" style="width: 100%" />
-                                    </a-form-item>
-                                </a-collapse-panel>
-                            </a-collapse>
-                        </div>
-                    </a-form>
-                </a-card>
-
                 <a-card title="外观设置" class="section-card">
                     <template #extra>
                         <a-typography-text type="secondary">配置应用外观主题和显示选项</a-typography-text>
@@ -1460,7 +1648,7 @@ onMounted(async () => {
                             </div>
                         </a-form-item>
 
-                        <a-form-item label="字体家族">
+                        <a-form-item label="字体">
                             <div style="display: flex; gap: 8px;">
                                 <a-select mode="tags" v-model:value="fontFamilyArray" :options="fontFamilyOptions"
                                     placeholder="选择或输入字体名称（支持多选）" style="flex: 1"
@@ -1579,6 +1767,46 @@ onMounted(async () => {
                     <a-divider style="margin: 16px 0;">历史记录列表</a-divider>
 
                     <HistoryManager ref="historyManagerRef" />
+                </a-card>
+
+                <a-card title="代理设置" class="section-card">
+                    <template #extra>
+                        <a-typography-text type="secondary">配置网络代理选项</a-typography-text>
+                    </template>
+
+                    <a-form layout="horizontal" class="aligned-form">
+                        <div class="form-item-with-hint">
+                            <a-form-item label="使用自定义代理">
+                                <a-switch v-model:checked="settingsStore.useCustomProxy" />
+                            </a-form-item>
+                            <div class="full-width-hint">
+                                <a-typography-text type="secondary" class="field-hint">
+                                    启用后将使用自定义代理地址进行网络请求（检查更新、下载安装包等）
+                                </a-typography-text>
+                            </div>
+                        </div>
+
+                        <a-form-item label="代理地址" v-if="settingsStore.useCustomProxy">
+                            <a-input v-model:value="settingsStore.proxyUrl" placeholder="例如: http://localhost:7890"
+                                style="width: 100%" />
+                        </a-form-item>
+
+                        <div v-if="settingsStore.useCustomProxy">
+                            <a-collapse v-model:active-key="proxyAuthExpanded" :bordered="false">
+                                <a-collapse-panel key="proxy-auth" header="代理认证" style="padding: 0;">
+                                    <a-form-item label="用户名">
+                                        <a-input v-model:value="settingsStore.proxyUsername"
+                                            placeholder="代理服务器用户名（如需认证）" style="width: 100%" />
+                                    </a-form-item>
+
+                                    <a-form-item label="密码">
+                                        <a-input-password v-model:value="settingsStore.proxyPassword"
+                                            placeholder="代理服务器密码（如需认证）" style="width: 100%" />
+                                    </a-form-item>
+                                </a-collapse-panel>
+                            </a-collapse>
+                        </div>
+                    </a-form>
                 </a-card>
 
                 <!-- 底部留白，防止被固定按钮遮挡 -->

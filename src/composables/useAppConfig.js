@@ -24,6 +24,36 @@ export function useAppConfig(settingsStore) {
     // 同步模型配置到后端
     async function syncModelConfigToBackend() {
         const currentModel = settingsStore.currentModel;
+
+        // 对于 Windows 语音识别引擎，不需要本地模型
+        if (settingsStore.asrEngine === 'windowsspeech') {
+            try {
+                // 获取当前音频源对应的设备ID
+                const currentDeviceId = settingsStore.audioSourceType === 'systemaudio'
+                    ? settingsStore.audioDeviceIdForSystem
+                    : settingsStore.audioDeviceIdForMicrophone;
+
+                const config = {
+                    asr_engine: "windowsspeech",
+                    current_model_id: "",
+                    models: [],
+                    audio_source_type: settingsStore.audioSourceType,
+                    audio_device_id: currentDeviceId || "",
+                    windows_speech_language: {
+                        language_tag: settingsStore.windowsSpeechLanguage || "zh-CN",
+                        display_name: settingsStore.windowsSpeechLanguage || "中文",
+                    },
+                };
+                await invoke("update_config", { config });
+                console.log("Windows Speech config synced to backend, language:", settingsStore.windowsSpeechLanguage);
+                return;
+            } catch (e) {
+                console.error("Failed to sync Windows Speech config:", e);
+                return;
+            }
+        }
+
+        // Sherpa-ONNX 需要模型
         if (!currentModel) {
             console.log("No model configured, skipping sync");
             return;
@@ -36,6 +66,7 @@ export function useAppConfig(settingsStore) {
                 : settingsStore.audioDeviceIdForMicrophone;
 
             const config = {
+                asr_engine: "sherpaonnx",
                 current_model_id: currentModel.id,
                 models: [{
                     id: currentModel.id,
@@ -55,6 +86,10 @@ export function useAppConfig(settingsStore) {
                 // 同步音频源配置
                 audio_source_type: settingsStore.audioSourceType,
                 audio_device_id: currentDeviceId || "",
+                windows_speech_language: {
+                    language_tag: "zh-CN",
+                    display_name: "中文",
+                },
             };
             await invoke("update_config", { config });
             console.log("Model config synced to backend:", currentModel.model_name);

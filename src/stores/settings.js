@@ -6,6 +6,10 @@ import { ref, computed } from 'vue'
  * 用于管理应用的所有配置，支持持久化和导入导出
  */
 export const useSettingsStore = defineStore('settings', () => {
+    // ========== ASR 引擎设置 ==========
+    const asrEngine = ref('sherpaonnx') // 'sherpaonnx' 或 'windowsspeech'
+    const windowsSpeechLanguage = ref('zh-CN') // Windows 语音识别语言
+
     // ========== 显示设置 ==========
     const showHistory = ref(true)
     const maxHistoryLength = ref(0) // 0 表示无限制
@@ -75,6 +79,10 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // 获取所有可导出的设置
     const exportableSettings = computed(() => ({
+        asr: {
+            asrEngine: asrEngine.value,
+            windowsSpeechLanguage: windowsSpeechLanguage.value,
+        },
         display: {
             showHistory: showHistory.value,
             maxHistoryLength: maxHistoryLength.value,
@@ -112,6 +120,18 @@ export const useSettingsStore = defineStore('settings', () => {
     }))
 
     // ========== Actions ==========
+
+    /**
+     * 更新 ASR 引擎设置
+     */
+    function updateAsrSettings(settings) {
+        if (settings.asrEngine !== undefined) {
+            asrEngine.value = settings.asrEngine
+        }
+        if (settings.windowsSpeechLanguage !== undefined) {
+            windowsSpeechLanguage.value = settings.windowsSpeechLanguage
+        }
+    }
 
     /**
      * 更新显示设置
@@ -309,6 +329,11 @@ export const useSettingsStore = defineStore('settings', () => {
                 throw new Error('无效的配置文件格式')
             }
 
+            // 导入 ASR 引擎设置
+            if (data.settings.asr) {
+                updateAsrSettings(data.settings.asr)
+            }
+
             // 导入显示设置
             if (data.settings.display) {
                 updateDisplaySettings(data.settings.display)
@@ -377,9 +402,15 @@ export const useSettingsStore = defineStore('settings', () => {
         currentModelId.value = ''
         availableModels.value = []
         modelAdvancedConfig.value = {}
+        asrEngine.value = 'sherpaonnx'
+        windowsSpeechLanguage.value = 'zh-CN'
     }
 
     return {
+        // ASR 引擎状态
+        asrEngine,
+        windowsSpeechLanguage,
+
         // 状态
         showHistory,
         maxHistoryLength,
@@ -411,6 +442,7 @@ export const useSettingsStore = defineStore('settings', () => {
         exportableSettings,
 
         // Actions
+        updateAsrSettings,
         updateDisplaySettings,
         updateHistorySettings,
         updateAppearanceSettings,
@@ -434,6 +466,8 @@ export const useSettingsStore = defineStore('settings', () => {
         storage: localStorage,
         // 持久化所有需要保存的字段
         pick: [
+            'asrEngine',
+            'windowsSpeechLanguage',
             'showHistory',
             'maxHistoryLength',
             'lowercaseSubtitle',

@@ -8,6 +8,8 @@ mod audio_wasapi;
 mod config;
 mod history;
 mod online_asr;
+#[cfg(target_os = "windows")]
+mod windows_speech;
 
 #[cfg(not(target_os = "windows"))]
 use audio::AudioCapture;
@@ -15,6 +17,8 @@ use audio::AudioCapture;
 use audio_wasapi::AudioCapture;
 use config::AppConfig;
 use config::ScannedModelFiles;
+#[cfg(target_os = "windows")]
+use config::AsrEngineType;
 use cpal::traits::{DeviceTrait, HostTrait};
 use history::{HistoryListItem, HistoryManager, HistorySession};
 use online_asr::{OnlineRecognizer, OnlineRecognizerConfig};
@@ -250,6 +254,29 @@ async fn start_recognition(
         config.clone()
     };
 
+    // 根据 ASR 引擎类型选择不同的处理方式
+    #[cfg(target_os = "windows")]
+    {
+        match config.asr_engine {
+            AsrEngineType::WindowsSpeech => {
+                return start_windows_speech_recognition(app_handle, state, config).await;
+            }
+            AsrEngineType::SherpaOnnx => {
+                // 继续使用 Sherpa-ONNX
+            }
+        }
+    }
+
+    // Sherpa-ONNX 识别逻辑
+    start_sherpa_recognition(app_handle, state, config).await
+}
+
+/// 使用 Sherpa-ONNX 引擎开始识别
+async fn start_sherpa_recognition(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+    config: AppConfig,
+) -> Result<(), String> {
     // 获取当前模型配置
     let asr_config = config
         .current_model()
@@ -258,7 +285,7 @@ async fn start_recognition(
 
     // 打印当前使用的模型信息
     println!("========================================");
-    println!("Starting recognition with model:");
+    println!("Starting recognition with Sherpa-ONNX:");
     println!("  Model ID: {}", asr_config.id);
     println!("  Model Name: {}", asr_config.name);
     println!("  Model Dir: {}", asr_config.model_dir);
@@ -476,6 +503,177 @@ async fn start_recognition(
     Ok(())
 }
 
+/// 使用 Windows 内置语音识别引擎开始识别 (仅 Windows)
+#[cfg(target_os = "windows")]
+async fn start_windows_speech_recognition(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+    config: AppConfig,
+) -> Result<(), String> {
+    use windows_speech::{WindowsSpeechConfig, WindowsSpeechRecognizer, WindowsSpeechEvent, WindowsSpeechScenario};
+
+    println!("========================================");
+    println!("Starting recognition with Windows Speech:");
+    println!("  Language: {}", config.windows_speech_language.language_tag);
+    println!("  Scenario: Dictation (Online)");
+    println!("========================================");
+
+    // 标记为运行中
+    {
+        let mut is_running = state.is_running.lock().map_err(|e| e.to_string())?;
+        *is_running = true;
+    }
+
+    // 开始新的历史记录会话
+    {
+        let enable_history = recover_lock(state.enable_history_save.lock());
+        if *enable_history {
+            let mut history_manager = recover_lock(state.history_manager.lock());
+            history_manager.start_session();
+            println!("历史记录会话已开始");
+        }
+    }
+
+    let language_tag = config.windows_speech_language.language_tag.clone();
+    let state_clone = Arc::clone(&state.inner());
+
+    thread::spawn(move || {
+        // 通知前端开始加载
+        let _ = app_handle.emit("model_loading", serde_json::json!({"loading": true, "message": "正在初始化 Windows 语音识别..."}));
+
+        // 创建 Windows 语音识别配置
+        let speech_config = WindowsSpeechConfig {
+            language: language_tag,
+            scenario: WindowsSpeechScenario::Dictation,
+        };
+
+        // 创建识别器
+        match WindowsSpeechRecognizer::new(speech_config) {
+            Ok(recognizer) => {
+                // 编译约束
+                match recognizer.compile_constraints() {
+                    Ok(true) => {
+                        println!("Windows 语音识别约束编译成功");
+                    }
+                    Ok(false) => {
+                        eprintln!("Windows 语音识别约束编译失败 - 请检查是否在系统设置中启用了在线语音识别");
+                        let _ = app_handle.emit("model_loading", serde_json::json!({"loading": false}));
+                        let _ = app_handle.emit("recognition_error", "请在系统设置 → 隐私 → 语音中启用在线语音识别");
+                        if let Ok(mut is_running) = state_clone.is_running.lock() {
+                            *is_running = false;
+                        }
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("Windows 语音识别约束编译错误: {:?}", e);
+                        let _ = app_handle.emit("model_loading", serde_json::json!({"loading": false}));
+                        let _ = app_handle.emit("recognition_error", format!("语音识别初始化失败: {:?}", e));
+                        if let Ok(mut is_running) = state_clone.is_running.lock() {
+                            *is_running = false;
+                        }
+                        return;
+                    }
+                }
+
+                // 开始连续识别
+                match recognizer.start_continuous() {
+                    Ok(event_rx) => {
+                        let _ = app_handle.emit("model_loading", serde_json::json!({"loading": false}));
+                        println!("Windows 语音识别已启动");
+
+                        // 定时保存历史记录相关
+                        let save_interval = Duration::from_secs(5);
+                        let mut last_save_time = Instant::now();
+
+                        // 处理识别事件
+                        loop {
+                            // 检查是否仍在运行
+                            if let Ok(is_running) = state_clone.is_running.lock() {
+                                if !*is_running {
+                                    break;
+                                }
+                            }
+
+                            // 使用超时接收，以便定期检查运行状态
+                            match event_rx.recv_timeout(Duration::from_millis(100)) {
+                                Ok(event) => {
+                                    match event {
+                                        WindowsSpeechEvent::Hypothesis(text) => {
+                                            // 中间结果
+                                            let subtitle_event = SubtitleEvent::new(text, false);
+                                            let _ = app_handle.emit("subtitle", &subtitle_event);
+                                        }
+                                        WindowsSpeechEvent::Result(text) => {
+                                            // 最终结果
+                                            let timestamp = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap()
+                                                .as_millis() as u64;
+                                            
+                                            let subtitle_event = SubtitleEvent::new(text.clone(), true);
+                                            let _ = app_handle.emit("subtitle", &subtitle_event);
+
+                                            // 保存到历史记录
+                                            {
+                                                let enable_history = recover_lock(state_clone.enable_history_save.lock());
+                                                if *enable_history {
+                                                    let mut history_manager = recover_lock(state_clone.history_manager.lock());
+                                                    history_manager.add_subtitle(text, timestamp);
+                                                    
+                                                    // 检查是否需要定时保存
+                                                    if last_save_time.elapsed() >= save_interval {
+                                                        let _ = history_manager.save_current_session();
+                                                        last_save_time = Instant::now();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        WindowsSpeechEvent::Error(err) => {
+                                            eprintln!("Windows 语音识别错误: {}", err);
+                                            let _ = app_handle.emit("recognition_error", &err);
+                                        }
+                                        WindowsSpeechEvent::StateChanged(state) => {
+                                            println!("Windows 语音识别状态: {}", state);
+                                        }
+                                    }
+                                }
+                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                    // 超时，继续循环
+                                    continue;
+                                }
+                                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                    // 通道关闭，退出循环
+                                    break;
+                                }
+                            }
+                        }
+
+                        // 停止识别
+                        let _ = recognizer.stop_continuous();
+                    }
+                    Err(e) => {
+                        eprintln!("启动 Windows 语音识别失败: {:?}", e);
+                        let _ = app_handle.emit("model_loading", serde_json::json!({"loading": false}));
+                        let _ = app_handle.emit("recognition_error", format!("启动语音识别失败: {:?}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("创建 Windows 语音识别器失败: {:?}", e);
+                let _ = app_handle.emit("model_loading", serde_json::json!({"loading": false}));
+                let _ = app_handle.emit("recognition_error", format!("创建语音识别器失败: {:?}", e));
+            }
+        }
+
+        // 清理状态
+        if let Ok(mut is_running) = state_clone.is_running.lock() {
+            *is_running = false;
+        }
+    });
+
+    Ok(())
+}
+
 /// 停止识别
 #[tauri::command]
 async fn stop_recognition(state: State<'_, Arc<AppState>>) -> Result<(), String> {
@@ -505,6 +703,147 @@ async fn stop_recognition(state: State<'_, Arc<AppState>>) -> Result<(), String>
     }
 
     Ok(())
+}
+
+// ========== Windows 语音识别相关命令 ==========
+
+/// 检查 Windows 语音识别是否可用 (仅 Windows)
+#[tauri::command]
+async fn is_windows_speech_available() -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        Ok(windows_speech::is_windows_speech_available())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(false)
+    }
+}
+
+/// 检查在线语音识别权限是否已启用 (仅 Windows)
+#[tauri::command]
+async fn check_windows_speech_permission() -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        Ok(windows_speech::check_online_speech_permission())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(false)
+    }
+}
+
+/// 获取 Windows 语音识别支持的语言列表 (仅 Windows)
+#[tauri::command]
+async fn get_windows_speech_languages() -> Result<Vec<String>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        Ok(windows_speech::get_supported_languages())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(vec![])
+    }
+}
+
+// ========== 系统字体相关命令 ==========
+
+/// 获取系统字体列表 (仅 Windows)
+#[tauri::command]
+async fn get_system_fonts() -> Result<Vec<String>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Graphics::DirectWrite::{
+            DWriteCreateFactory, IDWriteFactory, IDWriteFontCollection,
+            DWRITE_FACTORY_TYPE_SHARED,
+        };
+
+        unsafe {
+            // 创建 DirectWrite 工厂
+            let factory: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)
+                .map_err(|e| format!("Failed to create DirectWrite factory: {}", e))?;
+
+            // 获取系统字体集合
+            let mut font_collection: Option<IDWriteFontCollection> = None;
+            factory.GetSystemFontCollection(&mut font_collection, false)
+                .map_err(|e| format!("Failed to get system font collection: {}", e))?;
+
+            let font_collection = font_collection.ok_or("Failed to get font collection")?;
+            let family_count = font_collection.GetFontFamilyCount();
+
+            let mut font_names: Vec<String> = Vec::with_capacity(family_count as usize);
+
+            for i in 0..family_count {
+                if let Ok(font_family) = font_collection.GetFontFamily(i) {
+                    if let Ok(family_names) = font_family.GetFamilyNames() {
+                        // 尝试获取本地化名称，优先 zh-CN, zh-TW, 然后 en-US, 最后默认
+                        let locales = ["zh-CN", "zh-TW", "en-US"];
+                        let mut name_found = false;
+
+                        for locale in locales {
+                            let mut index: u32 = 0;
+                            let mut exists = windows::Win32::Foundation::BOOL::default();
+                            let locale_wide: Vec<u16> = locale.encode_utf16().chain(std::iter::once(0)).collect();
+                            
+                            if family_names.FindLocaleName(
+                                windows::core::PCWSTR(locale_wide.as_ptr()),
+                                &mut index,
+                                &mut exists,
+                            ).is_ok() && exists.as_bool() {
+                                if let Some(name) = get_font_name_at_index(&family_names, index) {
+                                    if !name.is_empty() {
+                                        font_names.push(name);
+                                        name_found = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        // 如果没找到本地化名称，使用默认（索引0）
+                        if !name_found {
+                            if let Some(name) = get_font_name_at_index(&family_names, 0) {
+                                if !name.is_empty() {
+                                    font_names.push(name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 去重并排序
+            font_names.sort();
+            font_names.dedup();
+
+            Ok(font_names)
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(vec![])
+    }
+}
+
+/// 从字体名称列表中获取指定索引的名称
+#[cfg(target_os = "windows")]
+fn get_font_name_at_index(
+    names: &windows::Win32::Graphics::DirectWrite::IDWriteLocalizedStrings,
+    index: u32,
+) -> Option<String> {
+    unsafe {
+        // 获取字符串长度
+        let length = names.GetStringLength(index).ok()?;
+
+        // 分配缓冲区 (+1 for null terminator)
+        let mut buffer: Vec<u16> = vec![0u16; (length + 1) as usize];
+        
+        names.GetString(index, &mut buffer).ok()?;
+
+        // 转换为 Rust String
+        let name = String::from_utf16_lossy(&buffer[..length as usize]);
+        Some(name)
+    }
 }
 
 /// 打开设置窗口
@@ -847,6 +1186,12 @@ pub fn run() {
             show_main_window,
             get_style_path,
             open_style_editor,
+            // Windows 语音识别相关命令
+            is_windows_speech_available,
+            check_windows_speech_permission,
+            get_windows_speech_languages,
+            // 系统字体相关命令
+            get_system_fonts,
             // 历史记录相关命令
             get_history_dir,
             set_history_dir,
