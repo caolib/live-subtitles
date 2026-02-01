@@ -1,6 +1,6 @@
 [package]
 name = "live-subtitles"
-version = "0.2.0"
+version = "0.2.1"
 description = "A live subtitles application using Tauri and sherpa-rs."
 authors = ["caolib"]
 edition = "2021"
